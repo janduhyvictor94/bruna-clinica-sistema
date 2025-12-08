@@ -10,13 +10,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Search, Edit2, Trash2, Phone, Mail, Calendar, X } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, Phone, Mail, Calendar, MapPin } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 const ORIGINS = ['Instagram', 'Facebook', 'TikTok', 'YouTube', 'Indicação', 'Google', 'Campanha', 'Post', 'Video', 'Outro'];
 const GENDERS = ['Feminino', 'Masculino', 'Outro'];
+
+// Função para corrigir o bug do dia anterior (fuso horário)
+const formatDateDisplay = (dateString) => {
+  if (!dateString) return '';
+  // Adiciona T12:00:00 para garantir que o navegador não volte o dia pelo fuso horário
+  return format(new Date(dateString + 'T12:00:00'), 'dd/MM');
+};
 
 export default function Patients() {
   const [isOpen, setIsOpen] = useState(false);
@@ -45,21 +52,10 @@ export default function Patients() {
             next_return_date: rest.next_return_date || null,
             scheduled_returns: Array.isArray(rest.scheduled_returns) ? rest.scheduled_returns : []
         };
-        
-        if (id) {
-            const { error } = await supabase.from('patients').update(payload).eq('id', id);
-            if (error) throw error;
-        } else {
-            const { error } = await supabase.from('patients').insert([payload]);
-            if (error) throw error;
-        }
+        if (id) await supabase.from('patients').update(payload).eq('id', id);
+        else await supabase.from('patients').insert([payload]);
     },
-    onSuccess: () => { 
-      queryClient.invalidateQueries({ queryKey: ['patients'] }); 
-      setIsOpen(false); 
-      setEditingPatient(null); 
-      toast.success('Salvo com sucesso!'); 
-    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['patients'] }); setIsOpen(false); setEditingPatient(null); toast.success('Salvo com sucesso!'); },
     onError: (err) => toast.error('Erro ao salvar: ' + err.message)
   });
 
@@ -85,6 +81,7 @@ export default function Patients() {
                     <h3 className="font-medium text-stone-800 text-sm sm:text-base truncate">{p.full_name}</h3>
                     <Badge variant="outline" className="text-[10px] hidden sm:inline-flex">{p.gender}</Badge>
                     <Badge className="text-[10px] bg-stone-100 text-stone-600">{p.origin}</Badge>
+                    {p.city && <Badge variant="outline" className="text-[10px] border-stone-300 text-stone-500"><MapPin className="w-2 h-2 mr-1"/>{p.city}</Badge>}
                   </div>
                   <div className="flex flex-wrap gap-2 text-xs text-stone-500">
                     {p.phone && <span className="flex items-center gap-1"><Phone className="w-3 h-3"/> {p.phone}</span>}
@@ -92,10 +89,10 @@ export default function Patients() {
                   </div>
                   {(p.next_return_date || (p.scheduled_returns && p.scheduled_returns.length > 0)) && (
                     <div className="flex flex-wrap gap-2 mt-2">
-                        {p.next_return_date && <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50"><Calendar className="w-3 h-3 mr-1"/> Principal: {format(new Date(p.next_return_date), 'dd/MM')}</Badge>}
+                        {p.next_return_date && <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50"><Calendar className="w-3 h-3 mr-1"/> Principal: {formatDateDisplay(p.next_return_date)}</Badge>}
                         {Array.isArray(p.scheduled_returns) && p.scheduled_returns.map((r, i) => (
                            <Badge key={i} variant="outline" className="text-blue-600 border-blue-200 bg-blue-50">
-                             <Calendar className="w-3 h-3 mr-1"/> {format(new Date(r.date), 'dd/MM')}
+                             <Calendar className="w-3 h-3 mr-1"/> {formatDateDisplay(r.date)}
                            </Badge>
                         ))}
                     </div>
@@ -111,51 +108,25 @@ export default function Patients() {
         ))}
       </div>
 
-      <PatientModal 
-        open={isOpen || !!editingPatient} 
-        onClose={() => { setIsOpen(false); setEditingPatient(null); }} 
-        patient={editingPatient} 
-        onSave={(data) => saveMutation.mutate({ ...data, id: editingPatient?.id })} 
-      />
-
-      <AlertDialog open={!!deletePatient} onOpenChange={() => setDeletePatient(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Excluir?</AlertDialogTitle>
-            <AlertDialogDescription>Irreversível.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={() => deleteMutation.mutate(deletePatient.id)} className="bg-red-600">Excluir</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <PatientModal open={isOpen || !!editingPatient} onClose={() => { setIsOpen(false); setEditingPatient(null); }} patient={editingPatient} onSave={(data) => saveMutation.mutate({ ...data, id: editingPatient?.id })} />
+      <AlertDialog open={!!deletePatient} onOpenChange={() => setDeletePatient(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir?</AlertDialogTitle><AlertDialogDescription>Irreversível.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => deleteMutation.mutate(deletePatient.id)} className="bg-red-600">Excluir</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     </div>
   );
 }
 
 function PatientModal({ open, onClose, patient, onSave }) {
-  const [formData, setFormData] = useState({ full_name: '', phone: '', email: '', birth_date: '', gender: '', cpf: '', address: '', origin: '', protocol: '', notes: '', next_return_date: '', scheduled_returns: [] });
+  const [formData, setFormData] = useState({ full_name: '', phone: '', email: '', birth_date: '', gender: '', cpf: '', address: '', city: '', origin: '', protocol: '', notes: '', next_return_date: '', scheduled_returns: [] });
   const [newReturn, setNewReturn] = useState({ date: '', description: '' });
 
   useEffect(() => { 
       if (patient) {
         setFormData({ 
-            full_name: patient.full_name || '', 
-            phone: patient.phone || '', 
-            email: patient.email || '', 
-            birth_date: patient.birth_date || '', 
-            gender: patient.gender || '', 
-            cpf: patient.cpf || '', 
-            address: patient.address || '', 
-            origin: patient.origin || '', 
-            protocol: patient.protocol || '', 
-            notes: patient.notes || '', 
-            next_return_date: patient.next_return_date || '', 
-            scheduled_returns: patient.scheduled_returns || [] 
+            full_name: patient.full_name || '', phone: patient.phone || '', email: patient.email || '', birth_date: patient.birth_date || '', 
+            gender: patient.gender || '', cpf: patient.cpf || '', address: patient.address || '', city: patient.city || '', origin: patient.origin || '', 
+            protocol: patient.protocol || '', notes: patient.notes || '', next_return_date: patient.next_return_date || '', scheduled_returns: patient.scheduled_returns || [] 
         });
       } else {
-        setFormData({ full_name: '', phone: '', email: '', birth_date: '', gender: '', cpf: '', address: '', origin: '', protocol: '', notes: '', next_return_date: '', scheduled_returns: [] }); 
+        setFormData({ full_name: '', phone: '', email: '', birth_date: '', gender: '', cpf: '', address: '', city: '', origin: '', protocol: '', notes: '', next_return_date: '', scheduled_returns: [] }); 
       }
       setNewReturn({ date: '', description: '' });
   }, [patient, open]);
@@ -167,10 +138,7 @@ function PatientModal({ open, onClose, patient, onSave }) {
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-            <DialogTitle>{patient ? 'Editar' : 'Novo'} Paciente</DialogTitle>
-            <DialogDescription className="hidden">Formulário de paciente</DialogDescription>
-        </DialogHeader>
+        <DialogHeader><DialogTitle>{patient ? 'Editar' : 'Novo'} Paciente</DialogTitle><DialogDescription className="hidden">Formulário</DialogDescription></DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2"><Label>Nome *</Label><Input value={formData.full_name} onChange={e => setFormData({...formData, full_name: e.target.value})} required/></div>
@@ -179,17 +147,17 @@ function PatientModal({ open, onClose, patient, onSave }) {
             <div><Label>Nascimento</Label><Input type="date" value={formData.birth_date} onChange={e => setFormData({...formData, birth_date: e.target.value})}/></div>
             <div><Label>Gênero</Label><Select value={formData.gender} onValueChange={v => setFormData({...formData, gender: v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{GENDERS.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Origem</Label><Select value={formData.origin} onValueChange={v => setFormData({...formData, origin: v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{ORIGINS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent></Select></div>
-            <div className="col-span-2"><Label>Endereço</Label><Input value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})}/></div>
+            <div className="col-span-2 grid grid-cols-3 gap-4">
+                <div className="col-span-2"><Label>Endereço</Label><Input value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})}/></div>
+                <div><Label>Cidade</Label><Input value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} placeholder="Ex: São Paulo"/></div>
+            </div>
+            <div className="col-span-2"><Label>CPF</Label><Input value={formData.cpf} onChange={e => setFormData({...formData, cpf: e.target.value})}/></div>
             <div className="col-span-2"><Label>Protocolo</Label><Textarea value={formData.protocol} onChange={e => setFormData({...formData, protocol: e.target.value})}/></div>
             <div className="col-span-2"><Label>Notas</Label><Textarea value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})}/></div>
             <div><Label>Próximo Retorno</Label><Input type="date" value={formData.next_return_date} onChange={e => setFormData({...formData, next_return_date: e.target.value})}/></div>
           </div>
-          <div className="p-4 bg-stone-50 rounded-xl space-y-4"><Label>Retornos Adicionais</Label><div className="flex gap-2"><Input type="date" value={newReturn.date} onChange={e => setNewReturn({...newReturn, date: e.target.value})} className="flex-1"/><Input placeholder="Desc" value={newReturn.description} onChange={e => setNewReturn({...newReturn, description: e.target.value})} className="flex-1"/><Button type="button" onClick={addRet} variant="outline"><Plus className="w-4 h-4"/></Button></div>{formData.scheduled_returns?.map((ret, i) => (<div key={i} className="flex gap-2 items-center p-2 bg-white rounded border"><Calendar className="w-4 h-4 text-stone-400"/><span className="text-sm">{format(new Date(ret.date), 'dd/MM')} - {ret.description}</span><Button type="button" variant="ghost" size="sm" className="ml-auto" onClick={() => removeRet(i)}><X className="w-4 h-4 text-red-500"/></Button></div>))}</div>
-          
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>Cancelar</Button>
-            <Button type="submit">Salvar</Button>
-          </DialogFooter>
+          <div className="p-4 bg-stone-50 rounded-xl space-y-4"><Label>Retornos Adicionais</Label><div className="flex gap-2"><Input type="date" value={newReturn.date} onChange={e => setNewReturn({...newReturn, date: e.target.value})} className="flex-1"/><Input placeholder="Desc" value={newReturn.description} onChange={e => setNewReturn({...newReturn, description: e.target.value})} className="flex-1"/><Button type="button" onClick={addRet} variant="outline"><Plus className="w-4 h-4"/></Button></div>{formData.scheduled_returns?.map((ret, i) => (<div key={i} className="flex gap-2 items-center p-2 bg-white rounded border"><Calendar className="w-4 h-4 text-stone-400"/><span className="text-sm">{formatDateDisplay(ret.date)} - {ret.description}</span><Button type="button" variant="ghost" size="sm" className="ml-auto" onClick={() => removeRet(i)}><X className="w-4 h-4 text-red-500"/></Button></div>))}</div>
+          <DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button type="submit">Salvar</Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
