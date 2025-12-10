@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Edit2, Trash2, Clock, DollarSign, Package, X, CreditCard, Calendar, Check, Send, ListPlus, Wallet, History as HistoryIcon } from 'lucide-react';
+import { Plus, Edit2, Trash2, Clock, DollarSign, X, Calendar, Wallet, History as HistoryIcon, Send } from 'lucide-react';
 import { format, addMonths } from 'date-fns';
 import { toast } from 'sonner';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -51,18 +51,20 @@ export default function Appointments() {
     if (!formData.patient_id) throw new Error("Selecione um paciente");
     const patient = patients.find(p => p.id === parseInt(formData.patient_id));
     
+    const cleanTime = formData.time && formData.time.trim() !== '' ? formData.time : null;
+    const cleanNextReturn = formData.next_return_date && formData.next_return_date.trim() !== '' ? formData.next_return_date : null;
+
     return {
         patient_id: parseInt(formData.patient_id),
         patient_name: patient?.full_name || '',
         patient_gender: patient?.gender,
         patient_origin: patient?.origin,
         date: formData.date,
-        time: formData.time || null,
+        time: cleanTime,
+        next_return_date: cleanNextReturn,
         status: formData.status || 'Agendado',
-        notes: formData.notes,
-        next_return_date: formData.next_return_date || null,
+        notes: Array.isArray(formData.notes) ? formData.notes : [],
         scheduled_returns: Array.isArray(formData.scheduled_returns) ? formData.scheduled_returns : [],
-        is_new_patient: formData.is_new_patient || false,
         procedures_performed: Array.isArray(formData.procedures_performed) ? formData.procedures_performed : [],
         materials_used: Array.isArray(formData.materials_used) ? formData.materials_used : [],
         total_value: parseFloat(formData.total_value) || 0,
@@ -70,7 +72,8 @@ export default function Appointments() {
         discount_percent: parseFloat(formData.discount_percent) || 0,
         discount_value: parseFloat(formData.discount_value) || 0,
         final_value: parseFloat(formData.final_value) || 0,
-        payment_method: formData.payments?.length > 1 ? 'Misto' : (formData.payments?.[0]?.method || ''),
+        is_new_patient: formData.is_new_patient || false,
+        payment_method: formData.payments?.length > 1 ? 'Misto' : (formData.payments?.[0]?.method || null),
         installments: 1, 
         installment_value: 0
     };
@@ -78,17 +81,14 @@ export default function Appointments() {
 
   const generateInstallments = async (formData, appointmentId, patientName, date) => {
       await supabase.from('installments').delete().eq('appointment_id', appointmentId);
-
       if (formData.payments && formData.payments.length > 0) {
         const installmentsArray = [];
-        
         formData.payments.forEach(pay => {
             if (pay.method.includes('Crédito') && pay.installments > 1) {
                 const valuePerInst = pay.value / pay.installments;
                 for (let i = 1; i <= pay.installments; i++) {
                     const baseDate = new Date(date + 'T12:00:00');
                     const dueDate = addMonths(baseDate, i - 1);
-                    
                     installmentsArray.push({
                         appointment_id: appointmentId,
                         patient_name: patientName,
@@ -96,7 +96,7 @@ export default function Appointments() {
                         total_installments: pay.installments,
                         value: valuePerInst,
                         due_date: format(dueDate, 'yyyy-MM-dd'),
-                        paid: true, // Cartão sempre entra como pago/recebido
+                        paid: true, 
                         is_received: true,
                         received_date: format(new Date(), 'yyyy-MM-dd'), 
                         payment_method: pay.method,
@@ -119,10 +119,7 @@ export default function Appointments() {
                 });
             }
         });
-
-        if (installmentsArray.length > 0) {
-            await supabase.from('installments').insert(installmentsArray);
-        }
+        if (installmentsArray.length > 0) await supabase.from('installments').insert(installmentsArray);
       }
   };
 
@@ -130,38 +127,9 @@ export default function Appointments() {
       const updates = {};
       if (nextReturn) updates.next_return_date = nextReturn;
       if (scheduledReturns && scheduledReturns.length > 0) updates.scheduled_returns = scheduledReturns;
-      
       if (Object.keys(updates).length > 0) {
           await supabase.from('patients').update(updates).eq('id', patientId);
           queryClient.invalidateQueries({ queryKey: ['patients'] });
-      }
-  };
-
-  const checkAndClearReturns = async (patientId, appointmentDate, status) => {
-      if (status !== 'Realizado') return;
-      const { data: patient } = await supabase.from('patients').select('*').eq('id', patientId).single();
-      if (!patient) return;
-
-      let updated = false;
-      const updates = {};
-
-      if (patient.next_return_date === appointmentDate) {
-          updates.next_return_date = null;
-          updated = true;
-      }
-
-      if (Array.isArray(patient.scheduled_returns)) {
-          const originalLen = patient.scheduled_returns.length;
-          const filteredReturns = patient.scheduled_returns.filter(r => r.date !== appointmentDate);
-          if (filteredReturns.length !== originalLen) {
-              updates.scheduled_returns = filteredReturns;
-              updated = true;
-          }
-      }
-
-      if (updated) {
-          await supabase.from('patients').update(updates).eq('id', patientId);
-          queryClient.invalidateQueries({ queryKey: ['patients'] }); 
       }
   };
 
@@ -185,11 +153,8 @@ export default function Appointments() {
           }
         }
       }
-
       await generateInstallments(formData, appointment.id, payload.patient_name, payload.date);
       await syncPatientReturns(payload.patient_id, payload.next_return_date, payload.scheduled_returns);
-      await checkAndClearReturns(payload.patient_id, payload.date, payload.status);
-
       return appointment;
     },
     onSuccess: () => {
@@ -208,10 +173,8 @@ export default function Appointments() {
         const payload = preparePayload(data); 
         const { error } = await supabase.from('appointments').update(payload).eq('id', id); 
         if (error) throw error; 
-
         await generateInstallments(data, id, payload.patient_name, payload.date);
         await syncPatientReturns(payload.patient_id, payload.next_return_date, payload.scheduled_returns);
-        await checkAndClearReturns(payload.patient_id, payload.date, payload.status);
     },
     onSuccess: () => { 
         queryClient.invalidateQueries({ queryKey: ['appointments'] }); 
@@ -223,16 +186,14 @@ export default function Appointments() {
     onError: (err) => toast.error('Erro ao atualizar: ' + err.message)
   });
 
+  // --- CORREÇÃO AQUI: Atualiza TODAS as tabelas ao trocar status ---
   const quickStatusMutation = useMutation({
-    mutationFn: async ({ id, status, patientId, date }) => {
+    mutationFn: async ({ id, status }) => {
         await supabase.from('appointments').update({ status }).eq('id', id);
-        if (status === 'Realizado') {
-            await checkAndClearReturns(patientId, date, status);
-        }
     },
     onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['appointments'] });
-        queryClient.invalidateQueries({ queryKey: ['patients'] }); // Atualiza para sumir o aviso
+        queryClient.invalidateQueries({ queryKey: ['appointments'] }); // Atualiza a lista de atendimentos
+        queryClient.invalidateQueries({ queryKey: ['patients'] }); // Atualiza os avisos no Dashboard
         toast.success('Status atualizado!');
     }
   });
@@ -245,17 +206,9 @@ export default function Appointments() {
   const handleOpenNewReturn = (patientId, dateStr) => {
     const patient = patients.find(p => p.id === patientId);
     if (!patient) return;
-    
     setEditingAppointment({
-        patient_id: patient.id,
-        patient_name: patient.full_name,
-        date: dateStr, 
-        status: 'Agendado',
-        is_new_patient: false, 
-        notes: [],
-        procedures_performed: [],
-        materials_used: [],
-        payments: []
+        patient_id: patient.id, patient_name: patient.full_name, date: dateStr, status: 'Agendado',
+        is_new_patient: false, notes: [], procedures_performed: [], materials_used: [], payments: []
     });
     setIsOpen(true);
   };
@@ -264,13 +217,6 @@ export default function Appointments() {
   const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
   const years = Array.from({ length: 21 }, (_, i) => new Date().getFullYear() - 10 + i);
   const statusColors = { 'Agendado': 'bg-blue-100 text-blue-700', 'Confirmado': 'bg-emerald-100 text-emerald-700', 'Realizado': 'bg-stone-100 text-stone-700', 'Cancelado': 'bg-rose-100 text-rose-700' };
-  const paymentMethodColors = { 
-      'Pix PJ': 'bg-green-100 text-green-700', 'Pix PF': 'bg-teal-100 text-teal-700', 
-      'Dinheiro': 'bg-amber-100 text-amber-700', 'Débito PF': 'bg-blue-100 text-blue-700', 
-      'Débito PJ': 'bg-cyan-100 text-cyan-700', 'Crédito PF': 'bg-purple-100 text-purple-700', 
-      'Crédito PJ': 'bg-violet-100 text-violet-700', 'Permuta': 'bg-orange-100 text-orange-700', 
-      'Troca em Procedimento': 'bg-pink-100 text-pink-700' 
-  };
 
   return (
     <div className="space-y-6">
@@ -278,8 +224,7 @@ export default function Appointments() {
       <div className="flex flex-wrap gap-3"><Select value={selectedMonth.toString()} onValueChange={v => setSelectedMonth(parseInt(v))}><SelectTrigger className="w-36 bg-white"><SelectValue/></SelectTrigger><SelectContent>{months.map((m, i) => <SelectItem key={i} value={i.toString()}>{m}</SelectItem>)}</SelectContent></Select><Select value={selectedYear.toString()} onValueChange={v => setSelectedYear(parseInt(v))}><SelectTrigger className="w-24 bg-white"><SelectValue/></SelectTrigger><SelectContent>{years.map(y => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent></Select></div>
       
       <div className="space-y-4">{filteredAppointments.map(apt => {
-        // Lógica para esconder retornos se já foi realizado
-        const showReturns = apt.status === 'Agendado';
+        const showReturns = apt.status !== 'Realizado';
 
         return (
         <Card key={apt.id} className="bg-white border-stone-100">
@@ -294,7 +239,7 @@ export default function Appointments() {
                             <div className="w-[120px]">
                                 <Select 
                                     defaultValue={apt.status} 
-                                    onValueChange={(val) => quickStatusMutation.mutate({ id: apt.id, status: val, patientId: apt.patient_id, date: apt.date })}
+                                    onValueChange={(val) => quickStatusMutation.mutate({ id: apt.id, status: val })}
                                 >
                                     <SelectTrigger className={`h-6 text-xs border-0 ${statusColors[apt.status] || 'bg-gray-100'}`}>
                                         <SelectValue />

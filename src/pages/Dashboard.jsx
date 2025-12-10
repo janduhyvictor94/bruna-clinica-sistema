@@ -8,10 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
   DollarSign, Calendar, TrendingUp, Bell, UserPlus, UserCheck, 
-  Cake, Clock, CheckCircle, ExternalLink, Plus, X, Phone, 
-  MessageCircle, StickyNote, History as HistoryIcon, Send, Trash2 
+  Cake, Clock, CheckCircle, ExternalLink, Trash2, Phone, MessageCircle, StickyNote, History as HistoryIcon, Send 
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
 import { Badge } from '@/components/ui/badge';
 import { format } from 'date-fns';
@@ -20,16 +18,11 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 
 const ORIGINS = ['Instagram', 'Facebook', 'TikTok', 'YouTube', 'Indicação', 'Google', 'Campanha', 'Post', 'Video', 'Outro'];
 const GENDERS = ['Feminino', 'Masculino', 'Outro'];
-
-const formatDateDisplay = (dateString) => {
-  if (!dateString) return '';
-  return format(new Date(dateString + 'T12:00:00'), 'dd/MM');
-};
 
 export default function Dashboard() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
@@ -46,22 +39,15 @@ export default function Dashboard() {
   const { data: patients = [] } = useQuery({ queryKey: ['patients'], queryFn: async () => { const { data } = await supabase.from('patients').select('*'); return data || []; } });
   const { data: expenses = [] } = useQuery({ queryKey: ['expenses'], queryFn: async () => { const { data } = await supabase.from('expenses').select('*'); return data || []; } });
 
-  // --- CORREÇÃO AQUI: Função de salvar com limpeza de dados vazios ---
   const savePatientMutation = useMutation({
     mutationFn: async (data) => {
         const { id, ...rest } = data;
-        
-        // Limpeza: Converte strings vazias "" para null
         const payload = {};
         Object.keys(rest).forEach(key => {
             const value = rest[key];
-            if (typeof value === 'string' && value.trim() === '') {
-                payload[key] = null;
-            } else {
-                payload[key] = value;
-            }
+            if (typeof value === 'string' && value.trim() === '') payload[key] = null;
+            else payload[key] = value;
         });
-
         if (id) await supabase.from('patients').update(payload).eq('id', id);
         else await supabase.from('patients').insert([payload]);
     },
@@ -75,34 +61,24 @@ export default function Dashboard() {
   });
 
   const clearMainReturnMutation = useMutation({
-    mutationFn: async ({ id, type }) => {
-        if (type === 'patient') await supabase.from('patients').update({ next_return_date: null }).eq('id', id);
-        else if (type === 'appointment') await supabase.from('appointments').update({ next_return_date: null }).eq('id', id);
+    mutationFn: async ({ id }) => {
+        await supabase.from('patients').update({ next_return_date: null }).eq('id', id);
     },
     onSuccess: () => { 
         queryClient.invalidateQueries({ queryKey: ['patients'] }); 
-        queryClient.invalidateQueries({ queryKey: ['appointments'] });
         toast.success('Retorno removido!'); 
     }
   });
 
   const clearExtraReturnMutation = useMutation({
-    mutationFn: async ({ id, index, type }) => {
-        if (type === 'patient') {
-            const patient = patients.find(p => p.id === id);
-            if (!patient) return;
-            const newReturns = patient.scheduled_returns.filter((_, i) => i !== index);
-            await supabase.from('patients').update({ scheduled_returns: newReturns }).eq('id', id);
-        } else if (type === 'appointment') {
-            const apt = appointments.find(a => a.id === id);
-            if (!apt) return;
-            const newReturns = apt.scheduled_returns.filter((_, i) => i !== index);
-            await supabase.from('appointments').update({ scheduled_returns: newReturns }).eq('id', id);
-        }
+    mutationFn: async ({ id, index }) => {
+        const patient = patients.find(p => p.id === id);
+        if (!patient) return;
+        const newReturns = patient.scheduled_returns.filter((_, i) => i !== index);
+        await supabase.from('patients').update({ scheduled_returns: newReturns }).eq('id', id);
     },
     onSuccess: () => { 
         queryClient.invalidateQueries({ queryKey: ['patients'] }); 
-        queryClient.invalidateQueries({ queryKey: ['appointments'] });
         toast.success('Retorno extra removido!'); 
     }
   });
@@ -146,42 +122,31 @@ export default function Dashboard() {
       return 'text-stone-800';
   };
 
+  // ============================================================
+  // LÓGICA DE AVISOS CORRIGIDA (SEM DUPLICIDADE)
+  // ============================================================
+  
   const getMainReturns = () => {
     const today = startOfDay(new Date());
     const limit = addDays(today, 7); 
     const alerts = [];
     
-    // 1. Pacientes
+    // PERCORRE APENAS PACIENTES (NUNCA OLHA AGENDAMENTOS PARA CRIAR AVISO)
     patients.forEach(p => {
         if (p.next_return_date) {
             const date = new Date(p.next_return_date + 'T12:00:00');
             if (date >= today && date <= limit) {
+                // Verifica se existe um atendimento REALIZADO nesta data
+                // Se o status for "Agendado", "Confirmado" ou "Cancelado", o aviso CONTINUA aparecendo
                 const isRealized = appointments.some(a => 
                     a.patient_id === p.id && 
                     isSameDay(new Date(a.date + 'T12:00:00'), date) && 
-                    a.status === 'Realizado'
+                    a.status === 'Realizado' 
                 );
                 
+                // Só mostra o aviso se NÃO foi realizado ainda
                 if (!isRealized) {
-                    alerts.push({ uniqueId: `p_${p.id}`, id: p.id, patientId: p.id, type: 'patient', name: p.full_name, date: p.next_return_date, source: 'Paciente', status: 'Pendente' });
-                }
-            }
-        }
-    });
-
-    // 2. Atendimentos
-    appointments.forEach(a => {
-        if (a.next_return_date) {
-            const date = new Date(a.next_return_date + 'T12:00:00');
-            if (date >= today && date <= limit && a.status !== 'Cancelado') {
-                const isRealized = appointments.some(existing => 
-                    existing.patient_id === a.patient_id && 
-                    isSameDay(new Date(existing.date + 'T12:00:00'), date) && 
-                    existing.status === 'Realizado'
-                );
-
-                if (!isRealized) {
-                    alerts.push({ uniqueId: `a_${a.id}`, id: a.id, patientId: a.patient_id, type: 'appointment', name: a.patient_name, date: a.next_return_date, source: 'Atendimento', status: 'Pendente' });
+                    alerts.push({ uniqueId: `p_${p.id}`, id: p.id, patientId: p.id, name: p.full_name, date: p.next_return_date, source: 'Paciente', status: 'Pendente' });
                 }
             }
         }
@@ -195,32 +160,23 @@ export default function Dashboard() {
     const limit = addDays(today, 7);
     const alerts = [];
     
+    // PERCORRE APENAS PACIENTES
     patients.forEach(p => {
         if (Array.isArray(p.scheduled_returns)) {
             p.scheduled_returns.forEach((r, i) => {
                 if (r.date) {
                     const date = new Date(r.date + 'T12:00:00');
                     if (date >= today && date <= limit) {
-                        const isRealized = appointments.some(a => a.patient_id === p.id && isSameDay(new Date(a.date + 'T12:00:00'), date) && a.status === 'Realizado');
-                        if (!isRealized) {
-                            alerts.push({ uniqueId: `pe_${p.id}_${i}`, id: p.id, patientId: p.id, index: i, type: 'patient', name: p.full_name, date: r.date, description: r.description, status: 'Pendente' });
-                        }
-                    }
-                }
-            });
-        }
-    });
+                        // Mesma lógica: só esconde se tiver um atendimento REALIZADO no dia
+                        const isRealized = appointments.some(a => 
+                            a.patient_id === p.id && 
+                            isSameDay(new Date(a.date + 'T12:00:00'), date) && 
+                            a.status === 'Realizado'
+                        );
 
-    appointments.forEach(a => {
-        if (Array.isArray(a.scheduled_returns) && a.status !== 'Cancelado') {
-            a.scheduled_returns.forEach((r, i) => {
-                if (r.date) {
-                    const date = new Date(r.date + 'T12:00:00');
-                    if (date >= today && date <= limit) {
-                         const isRealized = appointments.some(existing => existing.patient_id === a.patient_id && isSameDay(new Date(existing.date + 'T12:00:00'), date) && existing.status === 'Realizado');
-                         if (!isRealized) {
-                            alerts.push({ uniqueId: `ae_${a.id}_${i}`, id: a.id, patientId: a.patient_id, index: i, type: 'appointment', name: a.patient_name, date: r.date, description: r.description, status: 'Pendente' });
-                         }
+                        if (!isRealized) {
+                            alerts.push({ uniqueId: `pe_${p.id}_${i}`, id: p.id, patientId: p.id, index: i, name: p.full_name, date: r.date, description: r.description, status: 'Pendente' });
+                        }
                     }
                 }
             });
@@ -240,16 +196,6 @@ export default function Dashboard() {
     if (patient) {
         setSelectedAlertPatient(patient);
         setAlertModalOpen(true);
-    } else {
-        toast.error("Paciente não encontrado.");
-    }
-  };
-
-  const handleOpenPatient = (patientId) => {
-    const patient = patients.find(p => p.id === parseInt(patientId));
-    if (patient) {
-        setEditingPatient(patient);
-        setIsPatientModalOpen(true);
     } else {
         toast.error("Paciente não encontrado.");
     }
@@ -308,12 +254,10 @@ export default function Dashboard() {
                                     </div>
                                 </div>
                                 <div className="flex gap-1">
-                                    {/* Botão de Check */}
-                                    <button onClick={() => clearMainReturnMutation.mutate({ id: r.id, type: r.type })} className="p-2 hover:bg-green-100 rounded-full transition-colors" title="Marcar como Realizado (Baixa)">
+                                    <button onClick={() => clearMainReturnMutation.mutate({ id: r.id })} className="p-2 hover:bg-green-100 rounded-full transition-colors" title="Marcar como Realizado (Baixa)">
                                         <CheckCircle className="w-4 h-4 text-emerald-500 hover:text-emerald-700" />
                                     </button>
-                                    {/* Botão de Lixeira */}
-                                    <button onClick={() => clearMainReturnMutation.mutate({ id: r.id, type: r.type })} className="p-2 hover:bg-red-100 rounded-full transition-colors" title="Apagar Retorno">
+                                    <button onClick={() => clearMainReturnMutation.mutate({ id: r.id })} className="p-2 hover:bg-red-100 rounded-full transition-colors" title="Apagar Retorno">
                                         <Trash2 className="w-4 h-4 text-red-400 hover:text-red-600" />
                                     </button>
                                 </div>
@@ -340,10 +284,10 @@ export default function Dashboard() {
                                     <p className="text-[10px] text-blue-700 italic border-t border-blue-100 pt-1 mt-0.5">{r.description || 'Sem descrição'}</p>
                                 </div>
                                 <div className="flex flex-col gap-1">
-                                    <button onClick={() => clearExtraReturnMutation.mutate({ id: r.id, index: r.index, type: r.type })} className="p-1 hover:bg-green-100 rounded-full transition-colors" title="Concluir">
+                                    <button onClick={() => clearExtraReturnMutation.mutate({ id: r.id, index: r.index })} className="p-1 hover:bg-green-100 rounded-full transition-colors" title="Concluir">
                                         <CheckCircle className="w-4 h-4 text-emerald-500 hover:text-emerald-700" />
                                     </button>
-                                    <button onClick={() => clearExtraReturnMutation.mutate({ id: r.id, index: r.index, type: r.type })} className="p-1 hover:bg-red-100 rounded-full transition-colors" title="Apagar Extra">
+                                    <button onClick={() => clearExtraReturnMutation.mutate({ id: r.id, index: r.index })} className="p-1 hover:bg-red-100 rounded-full transition-colors" title="Apagar Extra">
                                         <Trash2 className="w-4 h-4 text-red-400 hover:text-red-600" />
                                     </button>
                                 </div>
