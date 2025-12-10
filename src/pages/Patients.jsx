@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Search, Edit2, Trash2, Phone, Mail, Calendar, MapPin, X, MessageCircle, ClipboardList, History, StickyNote } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, Phone, Mail, Calendar, MapPin, MessageCircle, ClipboardList, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -69,31 +69,107 @@ export default function Patients() {
     }
   }, [patients, searchParams, setSearchParams]);
 
+  // Função auxiliar para criar/atualizar agendamentos automaticamente
+  const syncReturnToAppointment = async (patientData, date, isMainReturn, description = 'Retorno Adicional') => {
+    if (!date) return;
+
+    const dateString = format(new Date(date), 'yyyy-MM-dd');
+
+    const existingAppointment = appointments.find(a => 
+      a.patient_id === patientData.id && 
+      a.date === dateString
+    );
+
+    const payload = {
+      patient_id: patientData.id,
+      patient_name: patientData.full_name,
+      date: dateString,
+      time: null,
+      status: existingAppointment?.status || 'Agendado',
+      is_new_patient: false,
+      notes: [{ text: isMainReturn ? `Próximo Retorno Principal: ${patientData.full_name}` : description }],
+      procedures_performed: existingAppointment?.procedures_performed || [],
+      materials_used: existingAppointment?.materials_used || [],
+    };
+
+    if (existingAppointment) {
+      await supabase.from('appointments')
+        .update(payload)
+        .eq('id', existingAppointment.id);
+    } else {
+      await supabase.from('appointments').insert([payload]);
+    }
+  };
+
   const saveMutation = useMutation({
     mutationFn: async (data) => {
-        const { id, ...rest } = data;
+        const { id, next_return_date, scheduled_returns, ...rest } = data;
         
-        // --- CORREÇÃO: Limpeza de dados ---
-        // Transforma campos vazios ("") em null para evitar erros no banco
-        // E permite salvar mesmo com campos faltando
         const payload = {};
         Object.keys(rest).forEach(key => {
             const value = rest[key];
-            if (typeof value === 'string' && value.trim() === '') {
-                payload[key] = null;
-            } else {
-                payload[key] = value;
-            }
+            if (typeof value === 'string' && value.trim() === '') payload[key] = null;
+            else payload[key] = value;
         });
+
+        payload.next_return_date = next_return_date || null;
+        payload.scheduled_returns = scheduled_returns || [];
         
-        if (id) await supabase.from('patients').update(payload).eq('id', id);
-        else await supabase.from('patients').insert([payload]);
+        let savedPatient;
+
+        if (id) {
+            const { data: updatedData } = await supabase.from('patients').update(payload).eq('id', id).select().single();
+            savedPatient = updatedData;
+        } else {
+            const { data: insertedData } = await supabase.from('patients').insert([payload]).select().single();
+            savedPatient = insertedData;
+        }
+
+        // --- AUTOMAÇÃO CRÍTICA: Cria Agendamentos na Agenda ---
+        if (savedPatient) {
+          // 1. Cria/Atualiza agendamento para o Próximo Retorno Principal
+          if (payload.next_return_date) {
+            await syncReturnToAppointment(savedPatient, payload.next_return_date, true);
+          } else {
+            // Se o campo foi limpo, tenta excluir agendamentos que tinham essa data
+            await supabase.from('appointments')
+              .delete()
+              .eq('patient_id', savedPatient.id)
+              .eq('date', editingPatient?.next_return_date) // Usa a data antiga para buscar
+              .limit(1); 
+          }
+
+          // 2. Cria/Atualiza agendamentos para os Retornos Adicionais
+          const existingReturnsDates = editingPatient?.scheduled_returns?.map(r => r.date) || [];
+          const currentReturnsDates = payload.scheduled_returns?.map(r => r.date) || [];
+          
+          // Encontra retornos que foram removidos e tenta deletar da agenda
+          const removedDates = existingReturnsDates.filter(date => !currentReturnsDates.includes(date));
+          for (const date of removedDates) {
+            await supabase.from('appointments')
+              .delete()
+              .eq('patient_id', savedPatient.id)
+              .eq('date', date)
+              .limit(1);
+          }
+
+          // Cria/atualiza os retornos que permaneceram ou foram adicionados
+          if (Array.isArray(payload.scheduled_returns)) {
+            for (const ret of payload.scheduled_returns) {
+              await syncReturnToAppointment(savedPatient, ret.date, false, ret.description);
+            }
+          }
+        }
+        // -----------------------------------------------------
+
+        return savedPatient;
     },
     onSuccess: () => { 
         queryClient.invalidateQueries({ queryKey: ['patients'] }); 
+        queryClient.invalidateQueries({ queryKey: ['appointments'] }); 
         setIsOpen(false); 
         setEditingPatient(null); 
-        toast.success('Salvo com sucesso!'); 
+        toast.success('Salvo com sucesso! Agenda atualizada.'); 
     },
     onError: (err) => toast.error('Erro ao salvar: ' + err.message)
   });
@@ -133,13 +209,13 @@ export default function Patients() {
                     {p.email && <span className="flex items-center gap-1 hidden sm:flex"><Mail className="w-3 h-3"/> {p.email}</span>}
                   </div>
                   
-                  {/* Visualização de Retornos no Card */}
+                  {/* Retorno Próximo (Visível) */}
                   {(p.next_return_date || (p.scheduled_returns && p.scheduled_returns.length > 0)) && (
                     <div className="flex flex-wrap gap-2 mt-2">
-                        {p.next_return_date && <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50"><Calendar className="w-3 h-3 mr-1"/> {formatDateDisplay(p.next_return_date)}</Badge>}
+                        {p.next_return_date && <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50"><Calendar className="w-3 h-3 mr-1"/> Próximo: {formatDateDisplay(p.next_return_date)}</Badge>}
                         {Array.isArray(p.scheduled_returns) && p.scheduled_returns.map((r, i) => (
                            <Badge key={i} variant="outline" className="text-blue-600 border-blue-200 bg-blue-50">
-                             <Calendar className="w-3 h-3 mr-1"/> {formatDateDisplay(r.date)}
+                             <Calendar className="w-3 h-3 mr-1"/> {r.description || 'Retorno Extra'}: {formatDateDisplay(r.date)}
                            </Badge>
                         ))}
                     </div>
@@ -165,7 +241,7 @@ export default function Patients() {
   );
 }
 
-// Histórico
+// Histórico (Mantido)
 function PatientHistoryModal({ open, onClose, patient, appointments }) {
     if (!patient) return null;
     const patientAppointments = appointments.filter(a => a.patient_id === patient.id && a.status !== 'Cancelado');
@@ -217,9 +293,9 @@ function PatientHistoryModal({ open, onClose, patient, appointments }) {
     );
 }
 
-// PatientModal
+// PatientModal (Corrigido para inclusão de edição e exclusão de retornos na ficha)
 function PatientModal({ open, onClose, patient, onSave }) {
-  const [formData, setFormData] = useState({ full_name: '', phone: '', whatsapp: '', email: '', birth_date: '', gender: '', cpf: '', address: '', city: '', origin: '', protocol: '', notes: '' });
+  const [formData, setFormData] = useState({ full_name: '', phone: '', whatsapp: '', email: '', birth_date: '', gender: '', cpf: '', address: '', city: '', origin: '', protocol: '', notes: '', next_return_date: '', scheduled_returns: [] });
 
   useEffect(() => { 
       if (patient) {
@@ -235,21 +311,30 @@ function PatientModal({ open, onClose, patient, onSave }) {
             city: patient.city || '', 
             origin: patient.origin || '', 
             protocol: patient.protocol || '', 
-            notes: patient.notes || ''
+            notes: patient.notes || '',
+            next_return_date: patient.next_return_date || '', 
+            scheduled_returns: patient.scheduled_returns || [] 
         });
       } else {
-        setFormData({ full_name: '', phone: '', whatsapp: '', email: '', birth_date: '', gender: '', cpf: '', address: '', city: '', origin: '', protocol: '', notes: '' }); 
+        setFormData({ full_name: '', phone: '', whatsapp: '', email: '', birth_date: '', gender: '', cpf: '', address: '', city: '', origin: '', protocol: '', notes: '', next_return_date: '', scheduled_returns: [] }); 
       }
   }, [patient, open]);
   
   const handleSubmit = (e) => { 
       e.preventDefault(); 
-      // Validação simples: Nome obrigatório
       if (!formData.full_name || formData.full_name.trim() === "") {
           toast.error("O nome do paciente é obrigatório.");
           return;
       }
       onSave(formData); 
+  };
+
+  const handleRemoveScheduledReturn = (indexToRemove) => {
+    setFormData(prev => ({
+        ...prev,
+        scheduled_returns: prev.scheduled_returns.filter((_, index) => index !== indexToRemove)
+    }));
+    toast.info("Retorno removido. Salve a ficha para confirmar a exclusão da agenda.");
   };
 
   return (
@@ -265,6 +350,59 @@ function PatientModal({ open, onClose, patient, onSave }) {
             <div><Label>Nascimento</Label><Input type="date" value={formData.birth_date} onChange={e => setFormData({...formData, birth_date: e.target.value})}/></div>
             <div><Label>Gênero</Label><Select value={formData.gender} onValueChange={v => setFormData({...formData, gender: v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{GENDERS.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Origem</Label><Select value={formData.origin} onValueChange={v => setFormData({...formData, origin: v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{ORIGINS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent></Select></div>
+            
+            {/* CAMPOS DE RETORNO NO MODAL DO PACIENTE */}
+            <div className="col-span-2 p-3 bg-stone-50 rounded-lg border border-stone-200">
+                <Label className="font-semibold text-sm mb-2 block">Gerenciar Retornos</Label>
+                <div>
+                    <Label className="text-xs">Próximo Retorno Principal (Cria Agendamento)</Label>
+                    <div className="flex gap-2">
+                        <Input 
+                            type="date" 
+                            value={formData.next_return_date || ''} 
+                            onChange={e => setFormData({...formData, next_return_date: e.target.value})} 
+                        />
+                        {/* Botão de Excluir Retorno Principal */}
+                        <Button 
+                            type="button" 
+                            variant="outline" 
+                            size="icon" 
+                            onClick={() => setFormData({...formData, next_return_date: ''})}
+                            className="text-red-500 hover:bg-red-50"
+                            title="Remover Retorno Principal"
+                        >
+                            <Trash2 className="w-4 h-4"/>
+                        </Button>
+                    </div>
+                </div>
+
+                <div className="mt-3">
+                    <Label className="text-xs block mb-1">Retornos Adicionais Agendados:</Label>
+                    {Array.isArray(formData.scheduled_returns) && formData.scheduled_returns.length > 0 ? (
+                        formData.scheduled_returns.map((ret, i) => (
+                            <div key={i} className="flex gap-2 bg-white p-1 mt-1 border rounded items-center justify-between text-xs">
+                                <div className='flex items-center gap-1'>
+                                    <Calendar className="w-3 h-3 text-stone-400"/> {formatDateDisplay(ret.date)} - {ret.description}
+                                </div>
+                                {/* Botão de Excluir Retorno Adicional */}
+                                <Button 
+                                    type="button" 
+                                    variant="ghost" 
+                                    size="sm" 
+                                    onClick={() => handleRemoveScheduledReturn(i)}
+                                    className="text-red-400 hover:text-red-600 hover:bg-red-50 p-1 h-auto"
+                                    title="Remover este Retorno"
+                                >
+                                    <X className="w-3 h-3"/>
+                                </Button>
+                            </div>
+                        ))
+                    ) : (
+                        <p className="text-xs text-stone-400 italic">Nenhum retorno adicional cadastrado.</p>
+                    )}
+                </div>
+            </div>
+
             <div className="col-span-2 grid grid-cols-3 gap-4">
                 <div className="col-span-2"><Label>Endereço</Label><Input value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})}/></div>
                 <div><Label>Cidade</Label><Input value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} placeholder="Ex: São Paulo"/></div>

@@ -1,16 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabase';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { startOfMonth, endOfMonth, isWithinInterval, addDays, startOfDay, getDate, getMonth, isSameDay } from 'date-fns';
+import { startOfMonth, endOfMonth, isWithinInterval, addDays, startOfDay, getDate, getMonth, isSameDay, isBefore, parseISO, subMonths, getYear, endOfDay } from 'date-fns';
 import PageHeader from '@/components/ui/PageHeader';
 import StatCard from '@/components/ui/StatCard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
   DollarSign, Calendar, TrendingUp, Bell, UserPlus, UserCheck, 
-  Cake, Clock, CheckCircle, ExternalLink, Trash2, Phone, MessageCircle, StickyNote, History as HistoryIcon, Send 
+  Cake, Clock, CheckCircle, ExternalLink, Trash2, Phone, MessageCircle, StickyNote, History as HistoryIcon, Send, X, ClipboardList, RotateCcw, AlertTriangle 
 } from 'lucide-react';
-import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
 import { Badge } from '@/components/ui/badge';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -24,6 +23,15 @@ import { Label } from '@/components/ui/label';
 const ORIGINS = ['Instagram', 'Facebook', 'TikTok', 'YouTube', 'Indicação', 'Google', 'Campanha', 'Post', 'Video', 'Outro'];
 const GENDERS = ['Feminino', 'Masculino', 'Outro'];
 
+const formatCurrency = (value) => {
+  return (value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+};
+
+const formatDateDisplay = (dateString) => {
+  if (!dateString) return '';
+  return format(new Date(dateString + 'T12:00:00'), 'dd/MM');
+};
+
 export default function Dashboard() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -35,9 +43,11 @@ export default function Dashboard() {
 
   const queryClient = useQueryClient();
 
+  // Garante que a sintaxe está correta (corrigindo o erro que encontramos antes)
   const { data: appointments = [] } = useQuery({ queryKey: ['appointments'], queryFn: async () => { const { data } = await supabase.from('appointments').select('*').order('date', { ascending: false }); return data || []; } });
   const { data: patients = [] } = useQuery({ queryKey: ['patients'], queryFn: async () => { const { data } = await supabase.from('patients').select('*'); return data || []; } });
   const { data: expenses = [] } = useQuery({ queryKey: ['expenses'], queryFn: async () => { const { data } = await supabase.from('expenses').select('*'); return data || []; } });
+  const { data: installments = [] } = useQuery({ queryKey: ['installments'], queryFn: async () => { const { data } = await supabase.from('installments').select('*'); return data || []; } });
 
   const savePatientMutation = useMutation({
     mutationFn: async (data) => {
@@ -95,26 +105,130 @@ export default function Dashboard() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['appointments'] }); toast.success('Nota excluída do histórico.'); }
   });
 
-  const monthStart = startOfMonth(new Date(selectedYear, selectedMonth));
-  const monthEnd = endOfMonth(new Date(selectedYear, selectedMonth));
-  const monthAppointments = appointments.filter(a => { const date = new Date(a.date + 'T12:00:00'); return isWithinInterval(date, { start: monthStart, end: monthEnd }) && a.status === 'Realizado'; });
-  const monthExpenses = expenses.filter(e => { const date = new Date(e.due_date + 'T12:00:00'); return isWithinInterval(date, { start: monthStart, end: monthEnd }); });
-  const totalRevenue = monthAppointments.reduce((sum, a) => sum + (a.final_value || a.total_value || 0), 0);
-  const totalExpenses = monthExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
-  const profit = totalRevenue - totalExpenses;
-  const newPatients = monthAppointments.filter(a => a.is_new_patient).length;
-  const returningPatients = monthAppointments.filter(a => !a.is_new_patient).length;
-  const genderData = patients.reduce((acc, p) => { const gender = p.gender || 'Outro'; acc[gender] = (acc[gender] || 0) + 1; return acc; }, {});
-  const genderChartData = [{ name: 'Feminino', value: genderData['Feminino'] || 0, color: '#c4a47c' }, { name: 'Masculino', value: genderData['Masculino'] || 0, color: '#78716c' }, { name: 'Outro', value: genderData['Outro'] || 0, color: '#d6d3d1' }].filter(d => d.value > 0);
+  // --- CÁLCULOS DE ESTATÍSTICAS E AVISOS ---
+  const stats = useMemo(() => {
+    const monthStart = startOfMonth(new Date(selectedYear, selectedMonth));
+    const monthEnd = endOfMonth(new Date(selectedYear, selectedMonth));
+    const today = startOfDay(new Date());
+    const sevenDaysFromNow = endOfDay(addDays(new Date(), 7)); 
 
-  const getBirthdaysToday = () => {
-    const today = new Date();
-    return patients.filter(p => {
-        if (!p.birth_date) return false;
-        const dob = new Date(p.birth_date + 'T12:00:00');
-        return getDate(dob) === getDate(today) && getMonth(dob) === getMonth(today);
+    // Filtros
+    const monthAppointments = appointments.filter(a => { const date = parseISO(a.date); return isWithinInterval(date, { start: monthStart, end: monthEnd }) && a.status === 'Realizado'; });
+    const monthExpenses = expenses.filter(e => { const date = parseISO(e.due_date); return isWithinInterval(date, { start: monthStart, end: monthEnd }); });
+    
+    // Métricas
+    const totalRevenue = monthAppointments.reduce((sum, a) => sum + (a.final_value || a.total_value || 0), 0);
+    const totalExpenses = monthExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+    const profit = totalRevenue - totalExpenses;
+    const newPatients = monthAppointments.filter(a => a.is_new_patient).length;
+    const returningPatients = monthAppointments.filter(a => !a.is_new_patient).length;
+    
+    // Aniversariantes
+    const birthdays = patients.filter(p => {
+      if (!p.birth_date) return false;
+      const dob = parseISO(p.birth_date);
+      const today = new Date();
+      return getDate(dob) === getDate(today) && getMonth(dob) === getMonth(today);
     });
-  };
+
+    // --- AVISO 1: AGENDAMENTOS PENDENTES (STATUS: AGENDADO) ---
+    const pendingAppointments = appointments
+        .filter(a => {
+            const appointmentDate = startOfDay(parseISO(a.date));
+            // Foco: Apenas AGENDADO
+            return a.status === 'Agendado' && 
+                   appointmentDate >= today && 
+                   appointmentDate <= sevenDaysFromNow;
+        })
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    // --- AVISO 2: ATENDIMENTOS CONFIRMADOS (STATUS: CONFIRMADO) ---
+    const upcomingAppointments = appointments
+        .filter(a => {
+            const appointmentDate = startOfDay(parseISO(a.date));
+            // Foco: Apenas CONFIRMADO
+            return a.status === 'Confirmado' && 
+                   appointmentDate >= today && 
+                   appointmentDate <= sevenDaysFromNow;
+        })
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    // --- AVISO 3: RETORNOS PENDENTES (7 DIAS) ---
+    // LOGICA CORRIGIDA: MOSTRAR SE AINDA NÃO FOI REALIZADO NEM CONFIRMADO (para aparecer aqui quando for AGENDADO ou PENDENTE)
+    const mainReturns = [];
+    const extraReturns = [];
+
+    patients.forEach(p => {
+        // Função para verificar se o retorno deve ser listado
+        const checkReturn = (dateStr, source, description, index) => {
+            if (!dateStr) return;
+            
+            const returnDate = startOfDay(parseISO(dateStr));
+            if (returnDate >= today && returnDate <= sevenDaysFromNow) {
+                
+                // 1. Procura Agendamento Ativo que 'ACOMODA' este retorno (Status Realizado ou Confirmado)
+                const hasAccommodation = appointments.some(a => 
+                    a.patient_id === p.id && 
+                    isSameDay(startOfDay(parseISO(a.date)), returnDate) && 
+                    (a.status === 'Realizado' || a.status === 'Confirmado') 
+                );
+                
+                // REGRA FINAL: MOSTRAR SE AINDA NÃO FOI ACOMODADO POR UM STATUS FINALIZADO/PROMOVIDO.
+                
+                if (!hasAccommodation) {
+                    const alertData = {
+                        uniqueId: `${source}_${p.id}_${index !== undefined ? index : ''}`, 
+                        id: p.id, 
+                        patientId: p.id, 
+                        name: p.full_name, 
+                        date: dateStr, 
+                        description: description, 
+                        source: source, 
+                        status: 'Pendente' 
+                    };
+                    
+                    if (source === 'Principal') {
+                        mainReturns.push(alertData);
+                    } else {
+                        extraReturns.push(alertData);
+                    }
+                }
+            }
+        };
+
+        // Verifica Retorno Principal
+        checkReturn(p.next_return_date, 'Principal', 'Retorno Principal', undefined);
+        
+        // Verifica Retornos Adicionais
+        if (Array.isArray(p.scheduled_returns)) {
+            p.scheduled_returns.forEach((r, i) => {
+                checkReturn(r.date, 'Adicional', r.description, i);
+            });
+        }
+    });
+
+    const allReturns = [...mainReturns, ...extraReturns].sort((a, b) => new Date(a.date) - new Date(b.date));
+    
+    // --- PENDÊNCIAS FINANCEIRAS (Cálculo mantido, mas não será exibido na coluna 3) ---
+    const pendingInstallments = installments.filter(i => !i.is_received);
+    const overdueInstallments = pendingInstallments.filter(i => parseISO(i.due_date) < today);
+    const totalPending = pendingInstallments.reduce((sum, i) => sum + i.value, 0);
+
+
+    return {
+      totalRevenue, totalExpenses, profit, newPatients, returningPatients, 
+      birthdays, upcomingAppointments, allReturns, totalPending, overdueInstallments,
+      monthAppointments, pendingAppointments
+    };
+  }, [appointments, patients, expenses, installments, selectedMonth, selectedYear]);
+
+  // Desestruturando o objeto stats para uso no JSX e em outras funções
+  const {
+      totalRevenue, totalExpenses, profit, monthAppointments,
+      birthdays, upcomingAppointments, allReturns, totalPending, overdueInstallments, 
+      newPatients, returningPatients, pendingAppointments
+  } = stats;
+
 
   const getStatusColorClass = (status) => {
       if (status === 'Confirmado') return 'text-blue-600 font-semibold';
@@ -122,69 +236,6 @@ export default function Dashboard() {
       return 'text-stone-800';
   };
 
-  // --- LÓGICA INTELIGENTE DE AVISOS ---
-  // O aviso aparece se a data chegou.
-  // O aviso só SOME se tiver um atendimento 'Realizado' nesta data.
-  // Se mudar para 'Agendado', o aviso reaparece.
-  
-  const getMainReturns = () => {
-    const today = startOfDay(new Date());
-    const limit = addDays(today, 7); 
-    const alerts = [];
-    
-    patients.forEach(p => {
-        if (p.next_return_date) {
-            const date = new Date(p.next_return_date + 'T12:00:00');
-            if (date >= today && date <= limit) {
-                // Procura atendimento 'Realizado' na mesma data
-                const isRealized = appointments.some(a => 
-                    a.patient_id === p.id && 
-                    isSameDay(new Date(a.date + 'T12:00:00'), date) && 
-                    a.status === 'Realizado'
-                );
-                
-                // Se NÃO estiver realizado, mostra o aviso
-                if (!isRealized) {
-                    alerts.push({ uniqueId: `p_${p.id}`, id: p.id, patientId: p.id, name: p.full_name, date: p.next_return_date, source: 'Paciente', status: 'Pendente' });
-                }
-            }
-        }
-    });
-
-    return alerts.sort((a, b) => new Date(a.date) - new Date(b.date));
-  };
-
-  const getExtraReturns = () => {
-    const today = startOfDay(new Date());
-    const limit = addDays(today, 7);
-    const alerts = [];
-    
-    patients.forEach(p => {
-        if (Array.isArray(p.scheduled_returns)) {
-            p.scheduled_returns.forEach((r, i) => {
-                if (r.date) {
-                    const date = new Date(r.date + 'T12:00:00');
-                    if (date >= today && date <= limit) {
-                        const isRealized = appointments.some(a => 
-                            a.patient_id === p.id && 
-                            isSameDay(new Date(a.date + 'T12:00:00'), date) && 
-                            a.status === 'Realizado'
-                        );
-
-                        if (!isRealized) {
-                            alerts.push({ uniqueId: `pe_${p.id}_${i}`, id: p.id, patientId: p.id, index: i, name: p.full_name, date: r.date, description: r.description, status: 'Pendente' });
-                        }
-                    }
-                }
-            });
-        }
-    });
-    return alerts.sort((a, b) => new Date(a.date) - new Date(b.date));
-  };
-
-  const birthdays = getBirthdaysToday();
-  const mainReturns = getMainReturns();
-  const extraReturns = getExtraReturns();
   const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
   const years = Array.from({ length: 21 }, (_, i) => new Date().getFullYear() - 10 + i);
 
@@ -198,20 +249,20 @@ export default function Dashboard() {
     }
   };
 
-  const handleOpenPatient = (patientId) => {
-    const patient = patients.find(p => p.id === parseInt(patientId));
-    if (patient) {
-        setEditingPatient(patient);
-        setIsPatientModalOpen(true);
-    } else {
-        toast.error("Paciente não encontrado.");
-    }
+  const getAptStatusColor = (status) => {
+      switch(status) {
+          case 'Confirmado': return 'bg-blue-100 text-blue-800 border-blue-200';
+          case 'Agendado': return 'bg-stone-100 text-stone-800 border-stone-200';
+          default: return 'bg-gray-100 text-gray-600';
+      }
   };
+
 
   return (
     <div className="space-y-6 sm:space-y-8">
       <PageHeader title="Dashboard" subtitle={`Visão geral da clínica`} action={<div className="flex gap-2"><Select value={selectedMonth.toString()} onValueChange={v => setSelectedMonth(parseInt(v))}><SelectTrigger className="w-24 sm:w-32 bg-white text-sm"><SelectValue/></SelectTrigger><SelectContent>{months.map((m, i) => <SelectItem key={i} value={i.toString()}>{m}</SelectItem>)}</SelectContent></Select><Select value={selectedYear.toString()} onValueChange={v => setSelectedYear(parseInt(v))}><SelectTrigger className="w-20 sm:w-24 bg-white text-sm"><SelectValue/></SelectTrigger><SelectContent>{years.map(y => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent></Select></div>} />
 
+      {/* CARDS DE ESTATÍSTICAS PRINCIPAIS (1ª LINHA) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4">
         <StatCard title="Faturamento" value={`R$ ${totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={DollarSign} />
         <StatCard title="Despesas" value={`R$ ${totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} icon={TrendingUp} />
@@ -219,19 +270,21 @@ export default function Dashboard() {
         <StatCard title="Atendimentos" value={monthAppointments.length} icon={Calendar} />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4 sm:gap-6">
-        <Card className="bg-white border-stone-200 shadow-sm"><CardHeader className="pb-2 p-4 sm:p-6 sm:pb-2"><CardTitle className="text-xs sm:text-sm font-semibold text-stone-900">Pacientes do Mês</CardTitle></CardHeader><CardContent className="p-4 pt-0 sm:p-6 sm:pt-0"><div className="space-y-3 sm:space-y-4"><div className="flex items-center justify-between p-3 sm:p-4 bg-emerald-50 rounded-xl border border-emerald-200"><div className="flex items-center gap-2 sm:gap-3"><div className="p-1.5 sm:p-2 bg-emerald-600 rounded-lg"><UserPlus className="w-3 h-3 sm:w-4 sm:h-4 text-white" /></div><span className="text-xs sm:text-sm font-medium text-stone-900">Novos</span></div><span className="text-lg sm:text-xl font-semibold text-stone-900">{newPatients}</span></div><div className="flex items-center justify-between p-3 sm:p-4 bg-blue-50 rounded-xl border border-blue-200"><div className="flex items-center gap-2 sm:gap-3"><div className="p-1.5 sm:p-2 bg-blue-600 rounded-lg"><UserCheck className="w-3 h-3 sm:w-4 sm:h-4 text-white" /></div><span className="text-xs sm:text-sm font-medium text-stone-900">Recorrentes</span></div><span className="text-lg sm:text-xl font-semibold text-stone-900">{returningPatients}</span></div></div></CardContent></Card>
-        <Card className="bg-white border-stone-200 shadow-sm"><CardHeader className="pb-2 p-4 sm:p-6 sm:pb-2"><CardTitle className="text-xs sm:text-sm font-semibold text-stone-900">Gênero dos Pacientes</CardTitle></CardHeader><CardContent className="p-4 pt-0 sm:p-6 sm:pt-0"><div className="h-32 sm:h-40">{genderChartData.length > 0 ? <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={genderChartData} cx="50%" cy="50%" innerRadius={30} outerRadius={50} dataKey="value" strokeWidth={0}>{genderChartData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer> : <div className="h-full flex items-center justify-center text-stone-400 text-xs sm:text-sm">Sem dados</div>}</div><div className="flex justify-center gap-3 sm:gap-4 mt-2 flex-wrap">{genderChartData.map((d) => <div key={d.name} className="flex items-center gap-1.5 sm:gap-2"><div className="w-2 h-2 sm:w-3 sm:h-3 rounded-full" style={{ backgroundColor: d.color }} /><span className="text-[10px] sm:text-xs text-stone-500">{d.name}: {d.value}</span></div>)}</div></CardContent></Card>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* SEÇÃO DE AVISOS (2ª LINHA) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
         
-        <Card className="bg-white border-stone-200 shadow-sm h-[600px] flex flex-col">
-            <CardHeader className="pb-2 p-4 flex flex-row items-center justify-between shrink-0"><CardTitle className="text-xs sm:text-sm font-semibold text-stone-900 flex items-center gap-2"><Cake className="w-4 h-4 text-pink-500" /> Aniversariantes (Hoje)</CardTitle></CardHeader>
+        {/* COLUNA 1: ANIVERSARIANTES E DADOS DO MÊS */}
+        {/* Usando md:col-span-1 e h-[600px] para manter o design anterior em 3 colunas */}
+        <Card className="md:col-span-1 border-stone-200 shadow-sm h-[600px] flex flex-col">
+            <CardHeader className="pb-2 p-4 flex flex-row items-center justify-between shrink-0">
+                <CardTitle className="text-xs sm:text-sm font-semibold text-stone-900 flex items-center gap-2">
+                    <Cake className="w-4 h-4 text-pink-500" /> Aniversariantes (Hoje)
+                </CardTitle>
+            </CardHeader>
             <CardContent className="p-4 pt-0 overflow-auto flex-1">
-                {birthdays.length > 0 ? (
-                    <div className="space-y-2">
-                        {birthdays.map(p => (
+                <div className="space-y-2 mb-4">
+                    {birthdays.length > 0 ? (
+                        birthdays.map(p => (
                             <div key={p.id} onClick={() => handleOpenAlertDetails(p.id)} className="p-2 bg-pink-50 border border-pink-100 rounded-lg flex items-center justify-between cursor-pointer hover:bg-pink-100 transition-colors">
                                 <div className="flex items-center gap-2">
                                     <Cake className="w-3 h-3 text-pink-400"/>
@@ -239,75 +292,94 @@ export default function Dashboard() {
                                 </div>
                                 <ExternalLink className="w-3 h-3 text-pink-300"/>
                             </div>
-                        ))}
+                        ))
+                    ) : <div className="text-xs text-stone-400 text-center py-4">Nenhum hoje</div>}
+                </div>
+                
+                {/* Pacientes do Mês */}
+                <CardHeader className="pb-2 p-0"><CardTitle className="text-xs font-semibold text-stone-900">Pacientes do Mês</CardTitle></CardHeader>
+                <div className="space-y-2 mt-2">
+                    <div className="flex items-center justify-between p-2 bg-emerald-50 rounded-xl border border-emerald-200">
+                        <span className="text-xs font-medium text-stone-900 flex items-center gap-2"><UserPlus className="w-4 h-4 text-emerald-600"/> Novos</span>
+                        <span className="text-lg font-semibold text-stone-900">{newPatients}</span>
                     </div>
-                ) : <div className="text-xs text-stone-400 text-center py-4">Nenhum hoje</div>}
+                    <div className="flex items-center justify-between p-2 bg-blue-50 rounded-xl border border-blue-200">
+                        <span className="text-xs font-medium text-stone-900 flex items-center gap-2"><UserCheck className="w-4 h-4 text-blue-600"/> Recorrentes</span>
+                        <span className="text-lg font-semibold text-stone-900">{returningPatients}</span>
+                    </div>
+                </div>
             </CardContent>
         </Card>
 
-        {/* Retornos Principais */}
-        <Card className="bg-white border-stone-200 shadow-sm h-[600px] flex flex-col">
-            <CardHeader className="pb-2 p-4 flex flex-row items-center justify-between shrink-0"><CardTitle className="text-xs sm:text-sm font-semibold text-stone-900 flex items-center gap-2"><Bell className="w-4 h-4 text-amber-500" /> Retornos (7 dias)</CardTitle></CardHeader>
+
+        {/* COLUNA 2: AGENDAMENTOS PENDENTES (STATUS: AGENDADO) */}
+        <Card className="md:col-span-1 border-stone-200 shadow-sm h-[600px] flex flex-col">
+            <CardHeader className="pb-2 p-4 flex flex-row items-center justify-between shrink-0">
+                <CardTitle className="text-xs sm:text-sm font-semibold text-stone-900 flex items-center gap-2">
+                    <Clock className="w-4 h-4 mr-2 text-stone-500" /> Agendamentos Pendentes (7 dias)
+                </CardTitle>
+                <Badge variant="secondary" className="bg-stone-500 text-white text-xs">{pendingAppointments.length}</Badge>
+            </CardHeader>
             <CardContent className="p-4 pt-0 overflow-auto flex-1">
-                {mainReturns.length > 0 ? (
+                {pendingAppointments.length > 0 ? (
                     <div className="space-y-2">
-                        {mainReturns.map(r => (
-                            <div key={r.uniqueId} className="flex items-center justify-between p-2 bg-amber-50 rounded-lg border border-amber-100 group">
-                                <div onClick={() => handleOpenAlertDetails(r.patientId)} className="min-w-0 flex-1 cursor-pointer">
-                                    <p className={`text-xs truncate ${getStatusColorClass(r.status)}`}>{r.name}</p>
-                                    <div className="flex items-center gap-2">
-                                        <Badge variant="outline" className="bg-white text-[10px] border-amber-200 px-1">{format(new Date(r.date + 'T12:00:00'), 'dd/MM')}</Badge>
-                                        <span className="text-[10px] text-stone-400">Origem: {r.source}</span>
+                        {pendingAppointments.map(apt => (
+                            <div key={apt.id} className="flex items-center justify-between p-2 bg-stone-50 rounded-lg border border-stone-100">
+                                <div className="min-w-0 flex-1">
+                                    <p className="text-xs truncate font-medium text-stone-800">{apt.patient_name}</p>
+                                    <div className="flex items-center gap-2 mt-0.5">
+                                        <Badge className={`text-[10px] ${getAptStatusColor(apt.status)}`}>{apt.status}</Badge>
+                                        <span className="text-[10px] text-stone-500">
+                                            {format(new Date(apt.date + 'T12:00:00'), 'dd/MM')} {apt.time}
+                                        </span>
                                     </div>
                                 </div>
-                                <div className="flex gap-1">
-                                    {/* Botão de Check */}
-                                    <button onClick={() => clearMainReturnMutation.mutate({ id: r.id })} className="p-2 hover:bg-green-100 rounded-full transition-colors" title="Marcar como Realizado (Baixa)">
-                                        <CheckCircle className="w-4 h-4 text-emerald-500 hover:text-emerald-700" />
-                                    </button>
-                                    {/* Botão de Lixeira */}
-                                    <button onClick={() => clearMainReturnMutation.mutate({ id: r.id })} className="p-2 hover:bg-red-100 rounded-full transition-colors" title="Apagar Retorno">
-                                        <Trash2 className="w-4 h-4 text-red-400 hover:text-red-600" />
-                                    </button>
-                                </div>
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-stone-400 hover:text-stone-600">
+                                    <ExternalLink className="w-3 h-3"/>
+                                </Button>
                             </div>
                         ))}
                     </div>
-                ) : <div className="text-xs text-stone-400 text-center py-4">Nenhum retorno próximo</div>}
+                ) : <div className="text-xs text-stone-400 text-center py-4">Nenhum agendamento com status AGENDADO.</div>}
             </CardContent>
         </Card>
 
-        {/* Retornos Adicionais */}
-        <Card className="bg-white border-stone-200 shadow-sm h-[600px] flex flex-col">
-            <CardHeader className="pb-2 p-4 flex flex-row items-center justify-between shrink-0"><CardTitle className="text-xs sm:text-sm font-semibold text-stone-900 flex items-center gap-2"><Clock className="w-4 h-4 text-blue-500" /> Retornos Adicionais (7 dias)</CardTitle></CardHeader>
+
+        {/* COLUNA 3: ATENDIMENTOS CONFIRMADOS (STATUS: CONFIRMADO) */}
+        <Card className="md:col-span-1 border-stone-200 shadow-sm h-[600px] flex flex-col">
+            <CardHeader className="pb-2 p-4 flex flex-row items-center justify-between shrink-0">
+                <CardTitle className="text-xs sm:text-sm font-semibold text-stone-900 flex items-center gap-2">
+                    <Calendar className="w-4 h-4 mr-2 text-blue-500" /> Atendimentos Confirmados (7 dias)
+                </CardTitle>
+                <Badge variant="secondary" className="bg-blue-500 text-white text-xs">{upcomingAppointments.length}</Badge>
+            </CardHeader>
             <CardContent className="p-4 pt-0 overflow-auto flex-1">
-                {extraReturns.length > 0 ? (
+                {upcomingAppointments.length > 0 ? (
                     <div className="space-y-2">
-                        {extraReturns.map(r => (
-                            <div key={r.uniqueId} className="flex items-start justify-between p-2 bg-blue-50 rounded-lg border border-blue-100 gap-2 group">
-                                <div onClick={() => handleOpenAlertDetails(r.patientId)} className="flex-1 cursor-pointer">
-                                    <div className="flex justify-between items-center">
-                                        <p className={`text-xs truncate max-w-[100px] ${getStatusColorClass(r.status)}`}>{r.name}</p>
-                                        <Badge variant="outline" className="bg-white text-[10px] border-blue-200">{format(new Date(r.date + 'T12:00:00'), 'dd/MM')}</Badge>
+                        {upcomingAppointments.map(apt => (
+                            <div key={apt.id} className="flex items-center justify-between p-2 bg-blue-50 rounded-lg border border-blue-100">
+                                <div className="min-w-0 flex-1">
+                                    <p className="text-xs truncate font-medium text-stone-800">{apt.patient_name}</p>
+                                    <div className="flex items-center gap-2 mt-0.5">
+                                        <Badge className={`text-[10px] ${getAptStatusColor(apt.status)}`}>{apt.status}</Badge>
+                                        <span className="text-[10px] text-stone-500">
+                                            {format(new Date(apt.date + 'T12:00:00'), 'dd/MM')} {apt.time}
+                                        </span>
                                     </div>
-                                    <p className="text-[10px] text-blue-700 italic border-t border-blue-100 pt-1 mt-0.5">{r.description || 'Sem descrição'}</p>
                                 </div>
-                                <div className="flex flex-col gap-1">
-                                    <button onClick={() => clearExtraReturnMutation.mutate({ id: r.id, index: r.index })} className="p-1 hover:bg-green-100 rounded-full transition-colors" title="Concluir">
-                                        <CheckCircle className="w-4 h-4 text-emerald-500 hover:text-emerald-700" />
-                                    </button>
-                                    <button onClick={() => clearExtraReturnMutation.mutate({ id: r.id, index: r.index })} className="p-1 hover:bg-red-100 rounded-full transition-colors" title="Apagar Extra">
-                                        <Trash2 className="w-4 h-4 text-red-400 hover:text-red-600" />
-                                    </button>
-                                </div>
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-stone-400 hover:text-blue-600">
+                                    <ExternalLink className="w-3 h-3"/>
+                                </Button>
                             </div>
                         ))}
                     </div>
-                ) : <div className="text-xs text-stone-400 text-center py-4">Nenhum extra próximo</div>}
+                ) : <div className="text-xs text-stone-400 text-center py-4">Nenhum atendimento CONFIRMADO nos próximos 7 dias.</div>}
             </CardContent>
         </Card>
 
       </div>
+      
+      {/* SEÇÃO PENDÊNCIAS FINANCEIRAS (REMOVIDA COMPLETAMENTE) */}
       
       <AlertDetailsModal 
         open={alertModalOpen}
@@ -365,9 +437,9 @@ function AlertDetailsModal({ open, onClose, patient, appointments, queryClient, 
     const { error } = await supabase.from('patients').update({ scheduled_returns: updatedReturns }).eq('id', patient.id);
     if(error) toast.error("Erro ao salvar retorno");
     else {
-        toast.success("Retorno Adicional agendado!");
         queryClient.invalidateQueries({ queryKey: ['patients'] });
         setNewReturn({ date: '', description: '' });
+        toast.success("Retorno Adicional agendado!");
     }
   };
 
@@ -385,7 +457,6 @@ function AlertDetailsModal({ open, onClose, patient, appointments, queryClient, 
     const { error } = await supabase.from('appointments').insert([payload]);
     if(error) toast.error("Erro ao salvar nota");
     else {
-        toast.success("Nota adicionada ao histórico!");
         queryClient.invalidateQueries({ queryKey: ['appointments'] });
         setNewNote({ date: format(new Date(), 'yyyy-MM-dd'), text: '' });
     }
@@ -485,22 +556,39 @@ function AlertDetailsModal({ open, onClose, patient, appointments, queryClient, 
 }
 
 function PatientModal({ open, onClose, patient, onSave }) {
-  const [formData, setFormData] = useState({ full_name: '', phone: '', whatsapp: '', email: '', birth_date: '', gender: '', cpf: '', address: '', city: '', origin: '', protocol: '', notes: '' });
+  const [formData, setFormData] = useState({ full_name: '', phone: '', whatsapp: '', email: '', birth_date: '', gender: '', cpf: '', address: '', city: '', origin: '', protocol: '', notes: '', next_return_date: '', scheduled_returns: [] });
 
   useEffect(() => { 
       if (patient) {
         setFormData({ 
-            full_name: patient.full_name || '', phone: patient.phone || '', whatsapp: patient.whatsapp || '', 
-            email: patient.email || '', birth_date: patient.birth_date || '', gender: patient.gender || '', 
-            cpf: patient.cpf || '', address: patient.address || '', city: patient.city || '', 
-            origin: patient.origin || '', protocol: patient.protocol || '', notes: patient.notes || ''
+            full_name: patient.full_name || '', 
+            phone: patient.phone || '', 
+            whatsapp: patient.whatsapp || '', 
+            email: patient.email || '', 
+            birth_date: patient.birth_date || '', 
+            gender: patient.gender || '', 
+            cpf: patient.cpf || '', 
+            address: patient.address || '', 
+            city: patient.city || '', 
+            origin: patient.origin || '', 
+            protocol: patient.protocol || '', 
+            notes: patient.notes || '',
+            next_return_date: patient.next_return_date || '', 
+            scheduled_returns: patient.scheduled_returns || [] 
         });
       } else {
-        setFormData({ full_name: '', phone: '', whatsapp: '', email: '', birth_date: '', gender: '', cpf: '', address: '', city: '', origin: '', protocol: '', notes: '' }); 
+        setFormData({ full_name: '', phone: '', whatsapp: '', email: '', birth_date: '', gender: '', cpf: '', address: '', city: '', origin: '', protocol: '', notes: '', next_return_date: '', scheduled_returns: [] }); 
       }
   }, [patient, open]);
   
-  const handleSubmit = (e) => { e.preventDefault(); onSave(formData); };
+  const handleSubmit = (e) => { 
+      e.preventDefault(); 
+      if (!formData.full_name || formData.full_name.trim() === "") {
+          toast.error("O nome do paciente é obrigatório.");
+          return;
+      }
+      onSave(formData); 
+  };
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -509,12 +597,38 @@ function PatientModal({ open, onClose, patient, onSave }) {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2"><Label>Nome *</Label><Input value={formData.full_name} onChange={e => setFormData({...formData, full_name: e.target.value})} required/></div>
-            <div><Label>Telefone *</Label><Input value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} required/></div>
+            <div><Label>Telefone</Label><Input value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} /></div>
             <div><Label>Whatsapp</Label><Input value={formData.whatsapp} onChange={e => setFormData({...formData, whatsapp: e.target.value})} placeholder="(00) 00000-0000" /></div>
             <div><Label>Email</Label><Input type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})}/></div>
             <div><Label>Nascimento</Label><Input type="date" value={formData.birth_date} onChange={e => setFormData({...formData, birth_date: e.target.value})}/></div>
             <div><Label>Gênero</Label><Select value={formData.gender} onValueChange={v => setFormData({...formData, gender: v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{GENDERS.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Origem</Label><Select value={formData.origin} onValueChange={v => setFormData({...formData, origin: v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{ORIGINS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}</SelectContent></Select></div>
+            
+            {/* CAMPOS DE RETORNO NO MODAL DO PACIENTE */}
+            <div className="col-span-2 p-3 bg-stone-50 rounded-lg border border-stone-200">
+                <Label className="font-semibold text-sm mb-2 block">Gerenciar Retornos</Label>
+                <div>
+                    <Label className="text-xs">Próximo Retorno Principal (Cria Agendamento)</Label>
+                    <div className="flex gap-2">
+                        <Input 
+                            type="date" 
+                            value={formData.next_return_date || ''} 
+                            onChange={e => setFormData({...formData, next_return_date: e.target.value})} 
+                        />
+                        <Button type="button" variant="outline" size="icon" onClick={() => setFormData({...formData, next_return_date: ''})}><X className="w-4 h-4 text-stone-500"/></Button>
+                    </div>
+                </div>
+
+                <div className="mt-3">
+                    <Label className="text-xs">Retornos Adicionais (Agenda)</Label>
+                    {Array.isArray(formData.scheduled_returns) && formData.scheduled_returns.map((ret, i) => (
+                        <div key={i} className="flex gap-2 bg-white p-1 mt-1 border rounded items-center justify-between text-xs">
+                            <Calendar className="w-3 h-3 text-stone-400"/> {formatDateDisplay(ret.date)} - {ret.description}
+                        </div>
+                    ))}
+                </div>
+            </div>
+
             <div className="col-span-2 grid grid-cols-3 gap-4">
                 <div className="col-span-2"><Label>Endereço</Label><Input value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})}/></div>
                 <div><Label>Cidade</Label><Input value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} placeholder="Ex: São Paulo"/></div>
