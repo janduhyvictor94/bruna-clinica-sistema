@@ -28,7 +28,6 @@ export default function Reports() {
   const [activeTab, setActiveTab] = useState('general'); // 'general' ou 'patient'
 
   // --- BUSCA DE DADOS CENTRALIZADA ---
-  // Buscamos aqui para passar para ambos os relatórios
   const { data: appointments = [] } = useQuery({ queryKey: ['appointments'], queryFn: async () => { const { data } = await supabase.from('appointments').select('*').order('date', { ascending: false }); return data || []; } });
   const { data: patients = [] } = useQuery({ queryKey: ['patients'], queryFn: async () => { const { data } = await supabase.from('patients').select('*'); return data || []; } });
   const { data: stockMovements = [] } = useQuery({ queryKey: ['stock_movements'], queryFn: async () => { const { data } = await supabase.from('stock_movements').select('*'); return data || []; } });
@@ -78,7 +77,7 @@ export default function Reports() {
 }
 
 // ==========================================
-// 1. RELATÓRIO GERAL (SEU CÓDIGO ORIGINAL)
+// 1. RELATÓRIO GERAL (CORRIGIDO)
 // ==========================================
 function GeneralReport({ appointments, patients, stockMovements }) {
   const [filterType, setFilterType] = useState('month');
@@ -106,9 +105,9 @@ function GeneralReport({ appointments, patients, stockMovements }) {
   const totalRevenue = filteredAppointments.reduce((sum, a) => sum + (a.final_value || a.total_value || 0), 0);
   const profit = totalRevenue - totalMaterialCost;
 
-  // --- ESTATÍSTICAS AVANÇADAS ---
+  // --- ESTATÍSTICAS AVANÇADAS (CORRIGIDAS) ---
   
-  // 1. Cidades
+  // 1. Cidades (Busca no paciente atual, não no histórico)
   const cityStats = filteredAppointments.reduce((acc, a) => {
     const patient = patients.find(p => p.id === a.patient_id);
     const city = patient?.city || 'Não Informado';
@@ -121,9 +120,11 @@ function GeneralReport({ appointments, patients, stockMovements }) {
     .sort((a, b) => b.value - a.value)
     .slice(0, 5); // Top 5
 
-  // 2. Canais (Origem)
+  // 2. Canais (Origem) - CORRIGIDO: Busca na ficha do paciente
   const originStats = filteredAppointments.reduce((acc, a) => {
-    const origin = a.patient_origin || 'Outro';
+    const patient = patients.find(p => p.id === a.patient_id);
+    const origin = patient?.origin || 'Outro';
+    
     if (!acc[origin]) acc[origin] = { count: 0, total: 0 };
     acc[origin].count++;
     acc[origin].total += a.final_value || a.total_value || 0;
@@ -136,23 +137,32 @@ function GeneralReport({ appointments, patients, stockMovements }) {
   const bestOrigin = Object.entries(originStats)
      .sort(([,a], [,b]) => b.count - a.count)[0];
 
-  // 3. Gênero
+  // 3. Gênero - CORRIGIDO: Busca na ficha do paciente para evitar erros
   const genderStats = filteredAppointments.reduce((acc, a) => {
-    const gender = a.patient_gender || 'Outro';
+    const patient = patients.find(p => p.id === a.patient_id);
+    // Tenta pegar o gênero do paciente atual. Se não tiver, usa 'Outro'.
+    const gender = patient?.gender || 'Outro';
+    
     if (!acc[gender]) acc[gender] = { count: 0, total: 0 };
     acc[gender].count++;
-    acc[gender].total += a.final_value || 0;
+    acc[gender].total += a.final_value || a.total_value || 0;
     return acc;
   }, {});
+  
   const genderPieData = Object.entries(genderStats).map(([name, data]) => ({ name, value: data.count }));
+  
+  // Quem mais gasta (Baseado no total acumulado por gênero correto)
   const highestSpendingGender = Object.entries(genderStats).sort(([,a], [,b]) => b.total - a.total)[0];
 
   // 4. Procedimentos (Top 5)
   const procedureStats = filteredAppointments.reduce((acc, a) => {
     if (a.procedures_performed?.length > 0) {
       a.procedures_performed.forEach(p => {
-        if (!acc[p.procedure_name]) acc[p.procedure_name] = 0;
-        acc[p.procedure_name]++;
+        const pName = p.procedure_name || p.name;
+        if (pName) {
+            if (!acc[pName]) acc[pName] = 0;
+            acc[pName]++;
+        }
       });
     }
     return acc;
@@ -189,7 +199,7 @@ function GeneralReport({ appointments, patients, stockMovements }) {
                 dataKey={dataKey}
                 label={({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
                     const RADIAN = Math.PI / 180;
-                    const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
+                    // const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
                     // const x = cx + radius * Math.cos(-midAngle * RADIAN);
                     // const y = cy + radius * Math.sin(-midAngle * RADIAN);
                     return percent > 0.05 ? `${(percent * 100).toFixed(0)}%` : '';

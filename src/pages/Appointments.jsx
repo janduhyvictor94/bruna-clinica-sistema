@@ -133,6 +133,10 @@ export default function Appointments() {
       }
   };
 
+  // --- AQUI ESTAVA A FUNÇÃO QUE APAGAVA A DATA ---
+  // Removi checkAndClearReturns() para garantir que a data fique lá 
+  // e o aviso possa voltar se o status mudar.
+
   const createMutation = useMutation({
     mutationFn: async (formData) => {
       const payload = preparePayload(formData);
@@ -186,14 +190,13 @@ export default function Appointments() {
     onError: (err) => toast.error('Erro ao atualizar: ' + err.message)
   });
 
-  // --- CORREÇÃO AQUI: Atualiza TODAS as tabelas ao trocar status ---
   const quickStatusMutation = useMutation({
     mutationFn: async ({ id, status }) => {
         await supabase.from('appointments').update({ status }).eq('id', id);
     },
     onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['appointments'] }); // Atualiza a lista de atendimentos
-        queryClient.invalidateQueries({ queryKey: ['patients'] }); // Atualiza os avisos no Dashboard
+        queryClient.invalidateQueries({ queryKey: ['appointments'] });
+        queryClient.invalidateQueries({ queryKey: ['patients'] }); // Atualiza avisos
         toast.success('Status atualizado!');
     }
   });

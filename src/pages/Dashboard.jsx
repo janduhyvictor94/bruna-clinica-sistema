@@ -122,29 +122,28 @@ export default function Dashboard() {
       return 'text-stone-800';
   };
 
-  // ============================================================
-  // LÓGICA DE AVISOS CORRIGIDA (SEM DUPLICIDADE)
-  // ============================================================
+  // --- LÓGICA INTELIGENTE DE AVISOS ---
+  // O aviso aparece se a data chegou.
+  // O aviso só SOME se tiver um atendimento 'Realizado' nesta data.
+  // Se mudar para 'Agendado', o aviso reaparece.
   
   const getMainReturns = () => {
     const today = startOfDay(new Date());
     const limit = addDays(today, 7); 
     const alerts = [];
     
-    // PERCORRE APENAS PACIENTES (NUNCA OLHA AGENDAMENTOS PARA CRIAR AVISO)
     patients.forEach(p => {
         if (p.next_return_date) {
             const date = new Date(p.next_return_date + 'T12:00:00');
             if (date >= today && date <= limit) {
-                // Verifica se existe um atendimento REALIZADO nesta data
-                // Se o status for "Agendado", "Confirmado" ou "Cancelado", o aviso CONTINUA aparecendo
+                // Procura atendimento 'Realizado' na mesma data
                 const isRealized = appointments.some(a => 
                     a.patient_id === p.id && 
                     isSameDay(new Date(a.date + 'T12:00:00'), date) && 
-                    a.status === 'Realizado' 
+                    a.status === 'Realizado'
                 );
                 
-                // Só mostra o aviso se NÃO foi realizado ainda
+                // Se NÃO estiver realizado, mostra o aviso
                 if (!isRealized) {
                     alerts.push({ uniqueId: `p_${p.id}`, id: p.id, patientId: p.id, name: p.full_name, date: p.next_return_date, source: 'Paciente', status: 'Pendente' });
                 }
@@ -160,14 +159,12 @@ export default function Dashboard() {
     const limit = addDays(today, 7);
     const alerts = [];
     
-    // PERCORRE APENAS PACIENTES
     patients.forEach(p => {
         if (Array.isArray(p.scheduled_returns)) {
             p.scheduled_returns.forEach((r, i) => {
                 if (r.date) {
                     const date = new Date(r.date + 'T12:00:00');
                     if (date >= today && date <= limit) {
-                        // Mesma lógica: só esconde se tiver um atendimento REALIZADO no dia
                         const isRealized = appointments.some(a => 
                             a.patient_id === p.id && 
                             isSameDay(new Date(a.date + 'T12:00:00'), date) && 
@@ -196,6 +193,16 @@ export default function Dashboard() {
     if (patient) {
         setSelectedAlertPatient(patient);
         setAlertModalOpen(true);
+    } else {
+        toast.error("Paciente não encontrado.");
+    }
+  };
+
+  const handleOpenPatient = (patientId) => {
+    const patient = patients.find(p => p.id === parseInt(patientId));
+    if (patient) {
+        setEditingPatient(patient);
+        setIsPatientModalOpen(true);
     } else {
         toast.error("Paciente não encontrado.");
     }
@@ -254,9 +261,11 @@ export default function Dashboard() {
                                     </div>
                                 </div>
                                 <div className="flex gap-1">
+                                    {/* Botão de Check */}
                                     <button onClick={() => clearMainReturnMutation.mutate({ id: r.id })} className="p-2 hover:bg-green-100 rounded-full transition-colors" title="Marcar como Realizado (Baixa)">
                                         <CheckCircle className="w-4 h-4 text-emerald-500 hover:text-emerald-700" />
                                     </button>
+                                    {/* Botão de Lixeira */}
                                     <button onClick={() => clearMainReturnMutation.mutate({ id: r.id })} className="p-2 hover:bg-red-100 rounded-full transition-colors" title="Apagar Retorno">
                                         <Trash2 className="w-4 h-4 text-red-400 hover:text-red-600" />
                                     </button>
