@@ -1,217 +1,172 @@
-import React, { useState } from 'react';
-import { supabase } from '../supabaseClient'; // Verifique se o caminho está certo
+import React, { useState, useEffect } from 'react';
+import { supabase } from '../supabaseClient';
+import PatientModal from './PatientModal'; // Certifique-se que o import está certo
 
-export default function PatientForm({ onClose, onSave }) {
-  const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({
-    full_name: '',
-    phone: '',
-    cpf: '',
-    birth_date: '',
-    gender: 'Feminino',
-    city: '',
-    address: '',
-    origin: 'Indicação',
-    notes: ''
-  });
+export default function Patients() {
+  const [patients, setPatients] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  // Controle do Modal
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [patientToEdit, setPatientToEdit] = useState(null);
 
-  const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
-  };
+  useEffect(() => {
+    fetchPatients();
+  }, []);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const fetchPatients = async () => {
     setLoading(true);
-
     try {
-      // 1. Tenta salvar no Supabase
+      // Busca TODOS os campos (*) para evitar erro de coluna faltando
       const { data, error } = await supabase
-        .from('patients') // Nome da tabela nova
-        .insert([
-          {
-            full_name: formData.full_name,
-            phone: formData.phone,
-            cpf: formData.cpf,
-            birth_date: formData.birth_date || null, // Se vazio, manda null
-            gender: formData.gender,
-            city: formData.city,
-            address: formData.address,
-            origin: formData.origin,
-            notes: formData.notes,
-            // Campos automáticos novos
-            scheduled_returns: [], 
-            next_return_date: null
-          }
-        ]);
+        .from('patients')
+        .select('*') 
+        .order('full_name', { ascending: true });
 
       if (error) throw error;
-
-      alert('Paciente cadastrado com sucesso!');
-      if (onSave) onSave(); // Atualiza a lista na tela principal
-      if (onClose) onClose(); // Fecha o modal
-
+      setPatients(data || []);
     } catch (error) {
-      console.error('Erro ao salvar:', error);
-      alert('Erro ao salvar paciente: ' + error.message);
+      console.error('Erro ao buscar pacientes:', error);
+      alert('Erro ao carregar lista.');
     } finally {
       setLoading(false);
     }
   };
 
+  const handleDelete = async (id) => {
+    if (!window.confirm('Tem certeza que deseja excluir este paciente?')) return;
+
+    try {
+      const { error } = await supabase
+        .from('patients')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      fetchPatients(); // Atualiza a lista
+    } catch (error) {
+      console.error('Erro ao excluir:', error);
+      alert('Erro ao excluir paciente.');
+    }
+  };
+
+  const handleEdit = (patient) => {
+    setPatientToEdit(patient);
+    setIsModalOpen(true);
+  };
+
+  const handleNewPatient = () => {
+    setPatientToEdit(null);
+    setIsModalOpen(true);
+  };
+
+  // Função para calcular idade
+  const calculateAge = (birthDateString) => {
+    if (!birthDateString) return '-';
+    const today = new Date();
+    const birthDate = new Date(birthDateString);
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    return age + ' anos';
+  };
+
+  // Filtragem (Busca)
+  const filteredPatients = patients.filter(patient =>
+    patient.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (patient.cpf && patient.cpf.includes(searchTerm)) ||
+    (patient.phone && patient.phone.includes(searchTerm))
+  );
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <h2 className="text-2xl font-bold mb-4 text-pink-600">Novo Paciente</h2>
-        
-        <form onSubmit={handleSubmit} className="space-y-4">
-          
-          {/* Nome Completo */}
-          <div>
-            <label className="block text-sm font-medium">Nome Completo *</label>
-            <input
-              type="text"
-              name="full_name"
-              required
-              className="w-full border p-2 rounded"
-              value={formData.full_name}
-              onChange={handleChange}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Telefone */}
-            <div>
-              <label className="block text-sm font-medium">Telefone/WhatsApp</label>
-              <input
-                type="text"
-                name="phone"
-                className="w-full border p-2 rounded"
-                placeholder="(00) 00000-0000"
-                value={formData.phone}
-                onChange={handleChange}
-              />
-            </div>
-
-            {/* CPF */}
-            <div>
-              <label className="block text-sm font-medium">CPF</label>
-              <input
-                type="text"
-                name="cpf"
-                className="w-full border p-2 rounded"
-                value={formData.cpf}
-                onChange={handleChange}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Data de Nascimento (Novo) */}
-            <div>
-              <label className="block text-sm font-medium">Data de Nascimento</label>
-              <input
-                type="date"
-                name="birth_date"
-                className="w-full border p-2 rounded"
-                value={formData.birth_date}
-                onChange={handleChange}
-              />
-            </div>
-
-            {/* Gênero */}
-            <div>
-              <label className="block text-sm font-medium">Gênero</label>
-              <select
-                name="gender"
-                className="w-full border p-2 rounded"
-                value={formData.gender}
-                onChange={handleChange}
-              >
-                <option value="Feminino">Feminino</option>
-                <option value="Masculino">Masculino</option>
-                <option value="Outro">Outro</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Cidade (Novo) */}
-            <div>
-              <label className="block text-sm font-medium">Cidade</label>
-              <input
-                type="text"
-                name="city"
-                className="w-full border p-2 rounded"
-                placeholder="Ex: São Paulo"
-                value={formData.city}
-                onChange={handleChange}
-              />
-            </div>
-
-            {/* Endereço */}
-            <div>
-              <label className="block text-sm font-medium">Endereço</label>
-              <input
-                type="text"
-                name="address"
-                className="w-full border p-2 rounded"
-                value={formData.address}
-                onChange={handleChange}
-              />
-            </div>
-          </div>
-
-          {/* Origem e Notas */}
-          <div>
-            <label className="block text-sm font-medium">Como conheceu?</label>
-            <select
-              name="origin"
-              className="w-full border p-2 rounded"
-              value={formData.origin}
-              onChange={handleChange}
-            >
-              <option value="Instagram">Instagram</option>
-              <option value="Google">Google</option>
-              <option value="Indicação">Indicação</option>
-              <option value="Passante">Passante</option>
-              <option value="Outro">Outro</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium">Observações</label>
-            <textarea
-              name="notes"
-              rows="3"
-              className="w-full border p-2 rounded"
-              value={formData.notes}
-              onChange={handleChange}
-            ></textarea>
-          </div>
-
-          {/* Botões */}
-          <div className="flex justify-end gap-2 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-gray-600 bg-gray-100 rounded hover:bg-gray-200"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-4 py-2 bg-pink-600 text-white rounded hover:bg-pink-700 disabled:opacity-50"
-            >
-              {loading ? 'Salvando...' : 'Cadastrar Paciente'}
-            </button>
-          </div>
-
-        </form>
+    <div className="p-6 bg-gray-50 min-h-screen">
+      
+      {/* Cabeçalho */}
+      <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+        <h1 className="text-3xl font-bold text-gray-800">Pacientes</h1>
+        <button
+          onClick={handleNewPatient}
+          className="bg-pink-600 text-white px-6 py-2 rounded-lg hover:bg-pink-700 transition shadow-md"
+        >
+          + Novo Paciente
+        </button>
       </div>
+
+      {/* Barra de Busca */}
+      <div className="mb-6">
+        <input
+          type="text"
+          placeholder="Buscar por nome, CPF ou telefone..."
+          className="w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-pink-500 outline-none"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+      </div>
+
+      {/* Tabela */}
+      {loading ? (
+        <div className="text-center py-10 text-gray-500">Carregando pacientes...</div>
+      ) : (
+        <div className="bg-white rounded-lg shadow overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-gray-100">
+              <tr>
+                <th className="p-4 text-sm font-semibold text-gray-600">Nome</th>
+                <th className="p-4 text-sm font-semibold text-gray-600">Idade</th>
+                <th className="p-4 text-sm font-semibold text-gray-600">Telefone</th>
+                <th className="p-4 text-sm font-semibold text-gray-600">Cidade</th>
+                <th className="p-4 text-sm font-semibold text-gray-600">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {filteredPatients.length > 0 ? (
+                filteredPatients.map((patient) => (
+                  <tr key={patient.id} className="hover:bg-gray-50 transition">
+                    <td className="p-4 font-medium text-gray-800">{patient.full_name}</td>
+                    <td className="p-4 text-gray-600">{calculateAge(patient.birth_date)}</td>
+                    <td className="p-4 text-gray-600">{patient.phone || '-'}</td>
+                    <td className="p-4 text-gray-600">{patient.city || '-'}</td>
+                    <td className="p-4 flex gap-2">
+                      <button
+                        onClick={() => handleEdit(patient)}
+                        className="text-blue-600 hover:text-blue-800 text-sm font-semibold"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        onClick={() => handleDelete(patient.id)}
+                        className="text-red-600 hover:text-red-800 text-sm font-semibold"
+                      >
+                        Excluir
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="5" className="p-6 text-center text-gray-500">
+                    Nenhum paciente encontrado.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Modal de Cadastro/Edição */}
+      <PatientModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSave={() => {
+          fetchPatients(); // Recarrega a lista após salvar
+          // O modal fecha sozinho pelo onClose interno ou podemos forçar aqui se precisar
+        }}
+        patientToEdit={patientToEdit}
+      />
     </div>
   );
 }
