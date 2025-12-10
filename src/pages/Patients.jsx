@@ -10,30 +10,30 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Search, Edit2, Trash2, Phone, Mail, Calendar, MapPin } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, Phone, Mail, Calendar, MapPin, X, MessageCircle, ClipboardList, History, StickyNote } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { useSearchParams } from 'react-router-dom';
 
 const ORIGINS = ['Instagram', 'Facebook', 'TikTok', 'YouTube', 'Indicação', 'Google', 'Campanha', 'Post', 'Video', 'Outro'];
 const GENDERS = ['Feminino', 'Masculino', 'Outro'];
 
-// Função para corrigir o bug do dia anterior (fuso horário)
 const formatDateDisplay = (dateString) => {
   if (!dateString) return '';
-  // Adiciona T12:00:00 para garantir que o navegador não volte o dia pelo fuso horário
   return format(new Date(dateString + 'T12:00:00'), 'dd/MM');
 };
 
 export default function Patients() {
   const [isOpen, setIsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [selectedPatientForHistory, setSelectedPatientForHistory] = useState(null);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [editingPatient, setEditingPatient] = useState(null);
   const [deletePatient, setDeletePatient] = useState(null);
   const queryClient = useQueryClient();
-
-  const urlParams = new URLSearchParams(window.location.search);
-  useEffect(() => { if (urlParams.get('action') === 'new') setIsOpen(true); }, []);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const { data: patients = [] } = useQuery({ 
     queryKey: ['patients'], 
@@ -43,15 +43,38 @@ export default function Patients() {
     } 
   });
 
+  const { data: appointments = [] } = useQuery({ 
+    queryKey: ['appointments'], 
+    queryFn: async () => { 
+        const { data } = await supabase.from('appointments').select('*').order('date', { ascending: false }); 
+        return data || []; 
+    } 
+  });
+
+  useEffect(() => {
+    const action = searchParams.get('action');
+    const patientId = searchParams.get('id');
+
+    if (patients.length > 0) {
+      if (action === 'new') {
+        setIsOpen(true);
+        setSearchParams({});
+      } else if (patientId) {
+        const found = patients.find(p => p.id === parseInt(patientId));
+        if (found) {
+          setEditingPatient(found);
+          setIsOpen(true);
+        }
+      }
+    }
+  }, [patients, searchParams, setSearchParams]);
+
   const saveMutation = useMutation({
     mutationFn: async (data) => {
         const { id, ...rest } = data;
-        const payload = { 
-            ...rest, 
-            birth_date: rest.birth_date || null, 
-            next_return_date: rest.next_return_date || null,
-            scheduled_returns: Array.isArray(rest.scheduled_returns) ? rest.scheduled_returns : []
-        };
+        // Limpa campos vazios ou undefined antes de enviar
+        const payload = { ...rest }; 
+        
         if (id) await supabase.from('patients').update(payload).eq('id', id);
         else await supabase.from('patients').insert([payload]);
     },
@@ -65,6 +88,11 @@ export default function Patients() {
   });
 
   const filteredPatients = patients.filter(p => (p.full_name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) || (p.phone || '').includes(searchTerm));
+
+  const openHistory = (patient) => {
+    setSelectedPatientForHistory(patient);
+    setHistoryOpen(true);
+  };
 
   return (
     <div className="space-y-6">
@@ -85,11 +113,14 @@ export default function Patients() {
                   </div>
                   <div className="flex flex-wrap gap-2 text-xs text-stone-500">
                     {p.phone && <span className="flex items-center gap-1"><Phone className="w-3 h-3"/> {p.phone}</span>}
+                    {p.whatsapp && <span className="flex items-center gap-1 text-green-600"><MessageCircle className="w-3 h-3"/> {p.whatsapp}</span>}
                     {p.email && <span className="flex items-center gap-1 hidden sm:flex"><Mail className="w-3 h-3"/> {p.email}</span>}
                   </div>
+                  
+                  {/* Visualização de Retornos no Card (Mantido apenas como leitura informativa) */}
                   {(p.next_return_date || (p.scheduled_returns && p.scheduled_returns.length > 0)) && (
                     <div className="flex flex-wrap gap-2 mt-2">
-                        {p.next_return_date && <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50"><Calendar className="w-3 h-3 mr-1"/> Principal: {formatDateDisplay(p.next_return_date)}</Badge>}
+                        {p.next_return_date && <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50"><Calendar className="w-3 h-3 mr-1"/> {formatDateDisplay(p.next_return_date)}</Badge>}
                         {Array.isArray(p.scheduled_returns) && p.scheduled_returns.map((r, i) => (
                            <Badge key={i} variant="outline" className="text-blue-600 border-blue-200 bg-blue-50">
                              <Calendar className="w-3 h-3 mr-1"/> {formatDateDisplay(r.date)}
@@ -99,6 +130,9 @@ export default function Patients() {
                   )}
                 </div>
                 <div className="flex gap-1 sm:gap-2 flex-shrink-0">
+                  <Button variant="outline" size="icon" className="h-8 w-8 text-blue-600 border-blue-200 bg-blue-50 hover:bg-blue-100" onClick={() => openHistory(p)} title="Ver Histórico">
+                      <ClipboardList className="w-3.5 h-3.5"/>
+                  </Button>
                   <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setEditingPatient(p); setIsOpen(true); }}><Edit2 className="w-3.5 h-3.5"/></Button>
                   <Button variant="outline" size="icon" className="h-8 w-8 text-rose-600" onClick={() => setDeletePatient(p)}><Trash2 className="w-3.5 h-3.5"/></Button>
                 </div>
@@ -109,30 +143,90 @@ export default function Patients() {
       </div>
 
       <PatientModal open={isOpen || !!editingPatient} onClose={() => { setIsOpen(false); setEditingPatient(null); }} patient={editingPatient} onSave={(data) => saveMutation.mutate({ ...data, id: editingPatient?.id })} />
+      <PatientHistoryModal open={historyOpen} onClose={() => setHistoryOpen(false)} patient={selectedPatientForHistory} appointments={appointments} />
       <AlertDialog open={!!deletePatient} onOpenChange={() => setDeletePatient(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir?</AlertDialogTitle><AlertDialogDescription>Irreversível.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => deleteMutation.mutate(deletePatient.id)} className="bg-red-600">Excluir</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     </div>
   );
 }
 
+// Histórico
+function PatientHistoryModal({ open, onClose, patient, appointments }) {
+    if (!patient) return null;
+    const patientAppointments = appointments.filter(a => a.patient_id === patient.id && a.status !== 'Cancelado');
+    const flatHistory = [];
+
+    patientAppointments.forEach(apt => {
+        let notesList = [];
+        if (Array.isArray(apt.notes)) notesList = apt.notes;
+        else if (typeof apt.notes === 'string' && apt.notes) {
+            try {
+                const parsed = JSON.parse(apt.notes);
+                if (Array.isArray(parsed)) notesList = parsed;
+                else notesList = [{ date: apt.date, text: apt.notes }];
+            } catch (e) {
+                notesList = [{ date: apt.date, text: apt.notes }];
+            }
+        }
+        notesList.forEach(note => {
+            flatHistory.push({ date: note.date || apt.date, text: note.text });
+        });
+    });
+    flatHistory.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    return (
+        <Dialog open={open} onOpenChange={onClose}>
+            <DialogContent className="max-w-xl max-h-[80vh] overflow-y-auto bg-stone-50/50">
+                <DialogHeader className="pb-4 border-b border-stone-100">
+                    <DialogTitle className="flex items-center gap-2">Histórico de Procedimentos</DialogTitle>
+                    <DialogDescription>Paciente: {patient.full_name}</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 mt-6">
+                    {flatHistory.length > 0 ? flatHistory.map((item, idx) => (
+                        <div key={idx} className="flex gap-4">
+                            <div className="flex flex-col items-center w-24 shrink-0 pt-1">
+                                <div className="text-xs font-bold text-stone-700">{format(new Date(item.date + 'T12:00:00'), 'dd/MM/yyyy')}</div>
+                                <div className="h-full w-[1px] bg-stone-200 my-1"></div>
+                            </div>
+                            <Card className="flex-1 border-stone-100 shadow-sm relative top-0 bg-stone-50">
+                                <CardContent className="p-3">
+                                    <p className="text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{item.text}</p>
+                                </CardContent>
+                            </Card>
+                        </div>
+                    )) : <div className="text-center py-10 text-stone-400">Nenhum histórico registrado.</div>}
+                </div>
+                <DialogFooter><Button variant="outline" onClick={onClose}>Fechar</Button></DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+// PatientModal
 function PatientModal({ open, onClose, patient, onSave }) {
-  const [formData, setFormData] = useState({ full_name: '', phone: '', email: '', birth_date: '', gender: '', cpf: '', address: '', city: '', origin: '', protocol: '', notes: '', next_return_date: '', scheduled_returns: [] });
-  const [newReturn, setNewReturn] = useState({ date: '', description: '' });
+  // GARANTINDO VALORES PADRÃO VAZIOS PARA NÃO DAR ERRO DE UNCONTROLLED INPUT
+  const [formData, setFormData] = useState({ full_name: '', phone: '', whatsapp: '', email: '', birth_date: '', gender: '', cpf: '', address: '', city: '', origin: '', protocol: '', notes: '' });
 
   useEffect(() => { 
       if (patient) {
         setFormData({ 
-            full_name: patient.full_name || '', phone: patient.phone || '', email: patient.email || '', birth_date: patient.birth_date || '', 
-            gender: patient.gender || '', cpf: patient.cpf || '', address: patient.address || '', city: patient.city || '', origin: patient.origin || '', 
-            protocol: patient.protocol || '', notes: patient.notes || '', next_return_date: patient.next_return_date || '', scheduled_returns: patient.scheduled_returns || [] 
+            full_name: patient.full_name || '', 
+            phone: patient.phone || '', 
+            whatsapp: patient.whatsapp || '', 
+            email: patient.email || '', 
+            birth_date: patient.birth_date || '', 
+            gender: patient.gender || '', 
+            cpf: patient.cpf || '', 
+            address: patient.address || '', 
+            city: patient.city || '', 
+            origin: patient.origin || '', 
+            protocol: patient.protocol || '', 
+            notes: patient.notes || ''
         });
       } else {
-        setFormData({ full_name: '', phone: '', email: '', birth_date: '', gender: '', cpf: '', address: '', city: '', origin: '', protocol: '', notes: '', next_return_date: '', scheduled_returns: [] }); 
+        setFormData({ full_name: '', phone: '', whatsapp: '', email: '', birth_date: '', gender: '', cpf: '', address: '', city: '', origin: '', protocol: '', notes: '' }); 
       }
-      setNewReturn({ date: '', description: '' });
   }, [patient, open]);
   
-  const addRet = () => { if(newReturn.date) setFormData({...formData, scheduled_returns: [...(formData.scheduled_returns || []), newReturn]}); setNewReturn({date:'', description:''}); };
-  const removeRet = (i) => setFormData({...formData, scheduled_returns: formData.scheduled_returns.filter((_, idx) => idx !== i)});
   const handleSubmit = (e) => { e.preventDefault(); onSave(formData); };
 
   return (
@@ -143,6 +237,7 @@ function PatientModal({ open, onClose, patient, onSave }) {
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2"><Label>Nome *</Label><Input value={formData.full_name} onChange={e => setFormData({...formData, full_name: e.target.value})} required/></div>
             <div><Label>Telefone *</Label><Input value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} required/></div>
+            <div><Label>Whatsapp</Label><Input value={formData.whatsapp} onChange={e => setFormData({...formData, whatsapp: e.target.value})} placeholder="(00) 00000-0000" /></div>
             <div><Label>Email</Label><Input type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})}/></div>
             <div><Label>Nascimento</Label><Input type="date" value={formData.birth_date} onChange={e => setFormData({...formData, birth_date: e.target.value})}/></div>
             <div><Label>Gênero</Label><Select value={formData.gender} onValueChange={v => setFormData({...formData, gender: v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{GENDERS.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}</SelectContent></Select></div>
@@ -153,10 +248,8 @@ function PatientModal({ open, onClose, patient, onSave }) {
             </div>
             <div className="col-span-2"><Label>CPF</Label><Input value={formData.cpf} onChange={e => setFormData({...formData, cpf: e.target.value})}/></div>
             <div className="col-span-2"><Label>Protocolo</Label><Textarea value={formData.protocol} onChange={e => setFormData({...formData, protocol: e.target.value})}/></div>
-            <div className="col-span-2"><Label>Notas</Label><Textarea value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})}/></div>
-            <div><Label>Próximo Retorno</Label><Input type="date" value={formData.next_return_date} onChange={e => setFormData({...formData, next_return_date: e.target.value})}/></div>
+            <div className="col-span-2"><Label>Notas (Gerais)</Label><Textarea value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})}/></div>
           </div>
-          <div className="p-4 bg-stone-50 rounded-xl space-y-4"><Label>Retornos Adicionais</Label><div className="flex gap-2"><Input type="date" value={newReturn.date} onChange={e => setNewReturn({...newReturn, date: e.target.value})} className="flex-1"/><Input placeholder="Desc" value={newReturn.description} onChange={e => setNewReturn({...newReturn, description: e.target.value})} className="flex-1"/><Button type="button" onClick={addRet} variant="outline"><Plus className="w-4 h-4"/></Button></div>{formData.scheduled_returns?.map((ret, i) => (<div key={i} className="flex gap-2 items-center p-2 bg-white rounded border"><Calendar className="w-4 h-4 text-stone-400"/><span className="text-sm">{formatDateDisplay(ret.date)} - {ret.description}</span><Button type="button" variant="ghost" size="sm" className="ml-auto" onClick={() => removeRet(i)}><X className="w-4 h-4 text-red-500"/></Button></div>))}</div>
           <DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button type="submit">Salvar</Button></DialogFooter>
         </form>
       </DialogContent>
