@@ -21,7 +21,7 @@ export default function PatientModal({ isOpen, onClose, onSave, patientToEdit = 
     if (patientToEdit) {
       setFormData({
         full_name: patientToEdit.full_name || '',
-        phone: patientToEdit.phone || '', // Garante que usa 'phone'
+        phone: patientToEdit.phone || '',
         email: patientToEdit.email || '',
         cpf: patientToEdit.cpf || '',
         birth_date: patientToEdit.birth_date || '',
@@ -61,27 +61,24 @@ export default function PatientModal({ isOpen, onClose, onSave, patientToEdit = 
     // 1. VALIDAÇÃO: Impede salvar se faltar nome
     if (!formData.full_name.trim()) {
       alert("Por favor, preencha o Nome Completo do paciente.");
-      return; // PARA AQUI. Não fecha o modal, não envia pro banco.
+      return; 
     }
 
     setLoading(true);
 
     try {
-      // 2. PREPARAÇÃO DOS DADOS
-      // Importante: Aqui definimos EXATAMENTE as colunas que existem no banco novo.
-      // NUNCA envie chaves que não existem (como 'whatsapp').
+      // --- CORREÇÃO: Prepara os dados convertendo vazio para null ---
       const dataToSave = {
         full_name: formData.full_name,
-        phone: formData.phone,       // Coluna correta: phone
-        email: formData.email,
-        cpf: formData.cpf,
+        phone: formData.phone.trim() === '' ? null : formData.phone.trim(),
+        email: formData.email.trim() === '' ? null : formData.email.trim(),
+        cpf: formData.cpf.trim() === '' ? null : formData.cpf.trim(),
         birth_date: formData.birth_date ? formData.birth_date : null,
         gender: formData.gender,
         city: formData.city,
         address: formData.address,
         origin: formData.origin,
         notes: formData.notes
-        // scheduled_returns e next_return_date são gerenciados em outra tela
       };
 
       let error;
@@ -112,7 +109,6 @@ export default function PatientModal({ isOpen, onClose, onSave, patientToEdit = 
     } catch (error) {
       console.error('Erro ao salvar:', error);
       alert('Erro ao salvar no sistema: ' + error.message);
-      // Nota: Não chamamos onClose() aqui, então o modal continua aberto para tentar de novo.
     } finally {
       setLoading(false);
     }
@@ -150,7 +146,6 @@ export default function PatientModal({ isOpen, onClose, onSave, patientToEdit = 
               placeholder="Ex: Maria da Silva"
               value={formData.full_name}
               onChange={handleChange}
-              // O atributo 'required' ajuda, mas a validação no JS garante que não fecha
             />
           </div>
 

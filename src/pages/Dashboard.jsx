@@ -46,10 +46,22 @@ export default function Dashboard() {
   const { data: patients = [] } = useQuery({ queryKey: ['patients'], queryFn: async () => { const { data } = await supabase.from('patients').select('*'); return data || []; } });
   const { data: expenses = [] } = useQuery({ queryKey: ['expenses'], queryFn: async () => { const { data } = await supabase.from('expenses').select('*'); return data || []; } });
 
+  // --- CORREÇÃO AQUI: Função de salvar com limpeza de dados vazios ---
   const savePatientMutation = useMutation({
     mutationFn: async (data) => {
         const { id, ...rest } = data;
-        const payload = { ...rest }; 
+        
+        // Limpeza: Converte strings vazias "" para null
+        const payload = {};
+        Object.keys(rest).forEach(key => {
+            const value = rest[key];
+            if (typeof value === 'string' && value.trim() === '') {
+                payload[key] = null;
+            } else {
+                payload[key] = value;
+            }
+        });
+
         if (id) await supabase.from('patients').update(payload).eq('id', id);
         else await supabase.from('patients').insert([payload]);
     },
@@ -134,10 +146,6 @@ export default function Dashboard() {
       return 'text-stone-800';
   };
 
-  // --- NOVA LÓGICA DE ALERTAS ---
-  // Agora só esconde o aviso se houver um atendimento "Realizado".
-  // Se estiver "Agendado", o aviso continua aparecendo (como lembrete de pendência).
-
   const getMainReturns = () => {
     const today = startOfDay(new Date());
     const limit = addDays(today, 7); 
@@ -148,11 +156,10 @@ export default function Dashboard() {
         if (p.next_return_date) {
             const date = new Date(p.next_return_date + 'T12:00:00');
             if (date >= today && date <= limit) {
-                // VERIFICA SE JÁ FOI REALIZADO
                 const isRealized = appointments.some(a => 
                     a.patient_id === p.id && 
                     isSameDay(new Date(a.date + 'T12:00:00'), date) && 
-                    a.status === 'Realizado' // <--- MUDANÇA AQUI
+                    a.status === 'Realizado'
                 );
                 
                 if (!isRealized) {
@@ -167,11 +174,10 @@ export default function Dashboard() {
         if (a.next_return_date) {
             const date = new Date(a.next_return_date + 'T12:00:00');
             if (date >= today && date <= limit && a.status !== 'Cancelado') {
-                // VERIFICA SE JÁ FOI REALIZADO
                 const isRealized = appointments.some(existing => 
                     existing.patient_id === a.patient_id && 
                     isSameDay(new Date(existing.date + 'T12:00:00'), date) && 
-                    existing.status === 'Realizado' // <--- MUDANÇA AQUI
+                    existing.status === 'Realizado'
                 );
 
                 if (!isRealized) {
