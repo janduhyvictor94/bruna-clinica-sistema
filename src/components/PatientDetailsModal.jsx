@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabase';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -7,21 +7,26 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Textarea } from "@/components/ui/textarea";
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Calendar, Clock, FileText, Plus, Phone, User, MapPin, AlertCircle, Trash2, Edit2 } from 'lucide-react';
+import { Calendar, Clock, FileText, Plus, Phone, User, MapPin, AlertCircle, Trash2, Edit2, Save, X } from 'lucide-react';
 import { toast } from 'sonner';
-// Importamos o Modal de Agendamento que já existe
 import { AppointmentModal } from '../pages/Appointments';
 
 export default function PatientDetailsModal({ open, onClose, patientId }) {
   const [activeTab, setActiveTab] = useState('details');
   const [isAppointmentModalOpen, setIsAppointmentModalOpen] = useState(false);
   const [editingAppointment, setEditingAppointment] = useState(null);
-  const [deleteAppointmentId, setDeleteAppointmentId] = useState(null);
+  
+  const [isEditingProtocol, setIsEditingProtocol] = useState(false);
+  const [protocolText, setProtocolText] = useState('');
+  
+  const [isEditingNotes, setIsEditingNotes] = useState(false);
+  const [notesText, setNotesText] = useState('');
+
   const queryClient = useQueryClient();
 
-  // --- BUSCAR DADOS DO PACIENTE ---
   const { data: patient } = useQuery({
     queryKey: ['patient', patientId],
     queryFn: async () => {
@@ -33,7 +38,13 @@ export default function PatientDetailsModal({ open, onClose, patientId }) {
     enabled: !!patientId && open,
   });
 
-  // --- BUSCAR HISTÓRICO DE ATENDIMENTOS DESSE PACIENTE ---
+  useEffect(() => {
+    if (patient) {
+      setProtocolText(patient.protocol || '');
+      setNotesText(patient.notes || '');
+    }
+  }, [patient]);
+
   const { data: appointments = [] } = useQuery({
     queryKey: ['patient_appointments', patientId],
     queryFn: async () => {
@@ -49,50 +60,53 @@ export default function PatientDetailsModal({ open, onClose, patientId }) {
     enabled: !!patientId && open,
   });
 
-  // --- FUNÇÃO PARA SALVAR O AGENDAMENTO (Reutiliza lógica do Pai se necessário, ou chama invalidate) ---
+  const updatePatientMutation = useMutation({
+    mutationFn: async (newData) => {
+      const { error } = await supabase.from('patients').update(newData).eq('id', patientId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['patient', patientId] });
+      queryClient.invalidateQueries({ queryKey: ['patients'] });
+      toast.success('Dados atualizados!');
+      setIsEditingProtocol(false);
+      setIsEditingNotes(false);
+    },
+    onError: (e) => toast.error('Erro ao atualizar: ' + e.message)
+  });
+
+  const handleSaveProtocol = () => { updatePatientMutation.mutate({ protocol: protocolText }); };
+  const handleDeleteProtocol = () => { if(confirm("Deseja apagar o protocolo?")) { setProtocolText(''); updatePatientMutation.mutate({ protocol: '' }); } };
+  const handleSaveNotes = () => { updatePatientMutation.mutate({ notes: notesText }); };
+  const handleDeleteNotes = () => { if(confirm("Deseja apagar as observações?")) { setNotesText(''); updatePatientMutation.mutate({ notes: '' }); } };
+
   const handleSaveAppointment = async (data) => {
     try {
         const { id, returns_to_create, ...rawData } = data;
-        
         const payload = {
-            patient_id: rawData.patient_id,
-            date: rawData.date,
-            time: rawData.time,
-            status: rawData.status,
-            type: rawData.type,
-            notes: rawData.notes,
-            payment_methods_json: rawData.payment_methods, 
-            procedures_json: rawData.procedures_json,
-            materials_json: rawData.materials_json,
-            total_amount: Number(rawData.total_amount) || 0,
-            cost_amount: Number(rawData.cost_amount) || 0,
-            profit_amount: Number(rawData.profit_amount) || 0,
-            discount_percent: Number(rawData.discount_percent) || 0
+            patient_id: rawData.patient_id, date: rawData.date, time: rawData.time, status: rawData.status,
+            type: rawData.type, notes: rawData.notes, payment_methods_json: rawData.payment_methods, 
+            procedures_json: rawData.procedures_json, materials_json: rawData.materials_json,
+            total_amount: Number(rawData.total_amount)||0, cost_amount: Number(rawData.cost_amount)||0,
+            profit_amount: Number(rawData.profit_amount)||0, discount_percent: Number(rawData.discount_percent)||0
         };
 
         let appointmentId = id;
+        if (id) { await supabase.from('appointments').update(payload).eq('id', id); } 
+        else { const { data: newApp } = await supabase.from('appointments').insert([payload]).select().single(); appointmentId = newApp.id; }
 
-        if (id) {
-            await supabase.from('appointments').update(payload).eq('id', id);
-        } else {
-            const { data: newApp } = await supabase.from('appointments').insert([payload]).select().single();
-            appointmentId = newApp.id;
+        if (payload.status === 'Realizado') {
+             // Lógica simplificada, backend real no Appointments.jsx
         }
 
-        // Se Realizado, dispara gatilhos de financeiro/estoque (Lógica simplificada aqui pois o backend/hook principal já trata)
-        // O ideal é que a AppointmentModal receba a prop onSave e faça o trabalho pesado, 
-        // mas aqui estamos apenas "repassando" o salvamento para atualizar a lista local.
-        
         queryClient.invalidateQueries({ queryKey: ['patient_appointments'] });
         queryClient.invalidateQueries({ queryKey: ['appointments_list'] });
-        queryClient.invalidateQueries({ queryKey: ['patients'] }); // Atualiza data de retorno na lista geral
+        queryClient.invalidateQueries({ queryKey: ['patient_history_sidebar'] }); // CORREÇÃO AQUI
         
         setIsAppointmentModalOpen(false);
         setEditingAppointment(null);
         toast.success('Agendamento salvo!');
-    } catch (error) {
-        toast.error('Erro ao salvar: ' + error.message);
-    }
+    } catch (error) { toast.error('Erro ao salvar: ' + error.message); }
   };
 
   const handleDeleteAppointment = async (id) => {
@@ -100,21 +114,14 @@ export default function PatientDetailsModal({ open, onClose, patientId }) {
         await supabase.from('stock_movements').delete().eq('appointment_id', id);
         await supabase.from('installments').delete().eq('appointment_id', id);
         await supabase.from('appointments').delete().eq('id', id);
-        
         queryClient.invalidateQueries({ queryKey: ['patient_appointments'] });
         toast.success('Atendimento excluído');
-      } catch (error) {
-        toast.error('Erro ao excluir');
-      }
+      } catch (error) { toast.error('Erro ao excluir'); }
   };
 
-  // Prepara dados para "Novo Retorno"
   const handleNewReturn = () => {
     setEditingAppointment({
-        patient_id: patientId, // Já vincula ao paciente atual
-        type: 'Recorrente',    // Já marca como Retorno
-        status: 'Agendado',
-        date: format(new Date(), 'yyyy-MM-dd')
+        patient_id: patientId, type: 'Recorrente', status: 'Agendado', date: format(new Date(), 'yyyy-MM-dd')
     });
     setIsAppointmentModalOpen(true);
   };
@@ -154,7 +161,6 @@ export default function PatientDetailsModal({ open, onClose, patientId }) {
             </div>
 
             <ScrollArea className="flex-1 p-6">
-                {/* ABA DE DADOS */}
                 <TabsContent value="details" className="space-y-6 mt-0">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <InfoCard icon={Phone} label="Contato" value={patient.phone} subValue={patient.whatsapp ? `Zap: ${patient.whatsapp}` : null} />
@@ -164,19 +170,80 @@ export default function PatientDetailsModal({ open, onClose, patientId }) {
                     </div>
                     <Card className="border-stone-100 shadow-sm">
                         <CardContent className="p-4">
-                            <h4 className="text-xs font-bold text-stone-400 uppercase mb-2 flex items-center gap-2"><FileText className="w-3 h-3"/> Protocolo Planejado</h4>
-                            <p className="text-sm text-stone-700 whitespace-pre-wrap">{patient.protocol || 'Nenhum protocolo definido.'}</p>
+                            <div className="flex justify-between items-start mb-2">
+                                <h4 className="text-xs font-bold text-stone-400 uppercase flex items-center gap-2"><FileText className="w-3 h-3"/> Protocolo Planejado</h4>
+                                {!isEditingProtocol ? (
+                                    <div className="flex gap-1">
+                                        {patient.protocol ? (
+                                            <>
+                                                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setIsEditingProtocol(true)}><Edit2 className="w-3 h-3 text-stone-500"/></Button>
+                                                <Button size="icon" variant="ghost" className="h-6 w-6 hover:bg-red-50 hover:text-red-600" onClick={handleDeleteProtocol}><Trash2 className="w-3 h-3"/></Button>
+                                            </>
+                                        ) : (
+                                            <Button size="sm" variant="ghost" className="h-6 text-xs text-blue-600" onClick={() => setIsEditingProtocol(true)}><Plus className="w-3 h-3 mr-1"/> Adicionar</Button>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="flex gap-1">
+                                        <Button size="sm" variant="ghost" className="h-6 w-6" onClick={() => { setIsEditingProtocol(false); setProtocolText(patient.protocol || ''); }}><X className="w-4 h-4 text-stone-400"/></Button>
+                                        <Button size="sm" className="h-6 bg-stone-900 text-white text-xs" onClick={handleSaveProtocol}><Save className="w-3 h-3 mr-1"/> Salvar</Button>
+                                    </div>
+                                )}
+                            </div>
+                            
+                            {isEditingProtocol ? (
+                                <Textarea 
+                                    value={protocolText} 
+                                    onChange={(e) => setProtocolText(e.target.value)} 
+                                    className="min-h-[100px] text-sm bg-stone-50"
+                                    placeholder="Descreva o protocolo planejado..."
+                                />
+                            ) : (
+                                <p className="text-sm text-stone-700 whitespace-pre-wrap">
+                                    {patient.protocol || <span className="text-stone-400 italic">Nenhum protocolo definido.</span>}
+                                </p>
+                            )}
                         </CardContent>
                     </Card>
                     <Card className="border-stone-100 shadow-sm bg-amber-50/50">
                         <CardContent className="p-4">
-                            <h4 className="text-xs font-bold text-amber-600 uppercase mb-2 flex items-center gap-2"><AlertCircle className="w-3 h-3"/> Observações</h4>
-                            <p className="text-sm text-stone-700 whitespace-pre-wrap">{patient.notes || 'Sem observações.'}</p>
+                            <div className="flex justify-between items-start mb-2">
+                                <h4 className="text-xs font-bold text-amber-600 uppercase flex items-center gap-2"><AlertCircle className="w-3 h-3"/> Observações</h4>
+                                {!isEditingNotes ? (
+                                    <div className="flex gap-1">
+                                        {patient.notes ? (
+                                            <>
+                                                <Button size="icon" variant="ghost" className="h-6 w-6 hover:bg-amber-100" onClick={() => setIsEditingNotes(true)}><Edit2 className="w-3 h-3 text-amber-700"/></Button>
+                                                <Button size="icon" variant="ghost" className="h-6 w-6 hover:bg-red-50 hover:text-red-600" onClick={handleDeleteNotes}><Trash2 className="w-3 h-3"/></Button>
+                                            </>
+                                        ) : (
+                                            <Button size="sm" variant="ghost" className="h-6 text-xs text-amber-700 hover:bg-amber-100" onClick={() => setIsEditingNotes(true)}><Plus className="w-3 h-3 mr-1"/> Adicionar</Button>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="flex gap-1">
+                                        <Button size="sm" variant="ghost" className="h-6 w-6 hover:bg-amber-100" onClick={() => { setIsEditingNotes(false); setNotesText(patient.notes || ''); }}><X className="w-4 h-4 text-amber-700"/></Button>
+                                        <Button size="sm" className="h-6 bg-amber-700 hover:bg-amber-800 text-white text-xs" onClick={handleSaveNotes}><Save className="w-3 h-3 mr-1"/> Salvar</Button>
+                                    </div>
+                                )}
+                            </div>
+
+                            {isEditingNotes ? (
+                                <Textarea 
+                                    value={notesText} 
+                                    onChange={(e) => setNotesText(e.target.value)} 
+                                    className="min-h-[80px] text-sm bg-white border-amber-200 focus:ring-amber-500"
+                                    placeholder="Observações importantes..."
+                                />
+                            ) : (
+                                <p className="text-sm text-stone-700 whitespace-pre-wrap">
+                                    {patient.notes || <span className="text-stone-400 italic">Sem observações.</span>}
+                                </p>
+                            )}
                         </CardContent>
                     </Card>
                 </TabsContent>
 
-                {/* ABA DE ATENDIMENTOS (AQUI ESTÁ A NOVIDADE) */}
                 <TabsContent value="appointments" className="space-y-4 mt-0">
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="text-sm font-bold text-stone-700">Histórico Clínico</h3>
@@ -237,10 +304,44 @@ export default function PatientDetailsModal({ open, onClose, patientId }) {
                     </div>
                 </TabsContent>
 
-                {/* ABA HISTÓRICO (PLACEHOLDER) */}
                 <TabsContent value="history" className="mt-0">
-                    <div className="text-center py-12 text-stone-400 bg-stone-50 rounded-xl border border-stone-100 border-dashed">
-                        Em breve: Fotos e Evolução.
+                    <h3 className="text-sm font-bold text-stone-700 mb-4 px-1">Evolução do Paciente (Descrição e Planejamento)</h3>
+                    <div className="space-y-6 relative border-l-2 border-stone-200 ml-3 pl-6 pb-4">
+                        {appointments.length > 0 ? appointments.map((app, index) => (
+                            <div key={app.id} className="relative">
+                                <div className="absolute -left-[31px] top-0 w-4 h-4 rounded-full bg-stone-200 border-2 border-white ring-1 ring-stone-100"></div>
+                                <div className="bg-white rounded-lg border border-stone-100 shadow-sm p-4 hover:shadow-md transition-shadow">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div className="flex flex-col">
+                                            <span className="text-sm font-bold text-stone-800 flex items-center gap-2">
+                                                {format(parseISO(app.date), 'dd/MM/yyyy')}
+                                                <Badge variant="secondary" className="text-[10px] font-normal">{app.status}</Badge>
+                                            </span>
+                                            <span className="text-xs text-stone-400 mt-0.5">Atendimento {app.type}</span>
+                                        </div>
+                                        <Button variant="ghost" size="icon" className="h-6 w-6 -mr-2 -mt-2" onClick={() => { setEditingAppointment(app); setIsAppointmentModalOpen(true); }}>
+                                            <Edit2 className="w-3 h-3 text-stone-400"/>
+                                        </Button>
+                                    </div>
+                                    <div className="bg-stone-50 rounded p-3 text-sm text-stone-700 whitespace-pre-wrap border border-stone-100">
+                                        {app.notes || <span className="text-stone-400 italic">Nenhuma descrição ou planejamento registrado para este atendimento.</span>}
+                                    </div>
+                                    {app.procedures_json && app.procedures_json.length > 0 && (
+                                        <div className="mt-3 flex flex-wrap gap-1">
+                                            {app.procedures_json.map((p, i) => (
+                                                <span key={i} className="text-[10px] bg-white border border-stone-200 px-2 py-0.5 rounded text-stone-500">
+                                                    {p.name}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )) : (
+                            <div className="ml-[-24px] text-center py-12 text-stone-400 bg-stone-50 rounded-xl border border-stone-100 border-dashed">
+                                Nenhuma evolução registrada.
+                            </div>
+                        )}
                     </div>
                 </TabsContent>
             </ScrollArea>
@@ -248,7 +349,6 @@ export default function PatientDetailsModal({ open, onClose, patientId }) {
       </DialogContent>
     </Dialog>
 
-    {/* MODAL DE AGENDAMENTO CONECTADO */}
     <AppointmentModal 
         open={isAppointmentModalOpen}
         onOpenChange={setIsAppointmentModalOpen}

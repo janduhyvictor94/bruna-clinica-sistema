@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea'; // Importando Textarea
+import { Textarea } from '@/components/ui/textarea';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -113,7 +113,6 @@ export default function Appointments() {
                         const qty = 1; 
                         const currentStock = Number(dbMat.stock_quantity) || 0;
                         const newStock = currentStock - qty;
-                        
                         await supabase.from('materials').update({ stock_quantity: newStock }).eq('id', dbMat.id);
                         
                         movementsPayload.push({
@@ -141,16 +140,12 @@ export default function Appointments() {
                 const installmentsPayload = [];
                 rawData.payment_methods.forEach(pm => {
                     const isCredit = pm.method && pm.method.includes('Crédito');
-
                     if (isCredit) {
                         const totalVal = Number(pm.value) || 0;
                         const numInstallments = Number(pm.installments) || 1;
                         const valPerInst = totalVal / numInstallments;
-                        
                         for (let i = 1; i <= numInstallments; i++) {
-                            // CORREÇÃO: i - 1 garante que a 1ª parcela seja no mês atual (Data + 0 meses)
                             const dueDate = addMonths(parseISO(payload.date), i - 1);
-                            
                             installmentsPayload.push({
                                 appointment_id: appointmentId,
                                 patient_name: rawData.patient_name_ref || 'Paciente',
@@ -186,6 +181,8 @@ export default function Appointments() {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });     
       queryClient.invalidateQueries({ queryKey: ['installments'] }); 
       queryClient.invalidateQueries({ queryKey: ['stock-movements'] });
+      // ATUALIZA O HISTÓRICO LATERAL
+      queryClient.invalidateQueries({ queryKey: ['patient_history_sidebar'] });
       setIsModalOpen(false);
       setEditingAppointment(null);
       toast.success('Salvo e sincronizado!');
@@ -201,6 +198,7 @@ export default function Appointments() {
     },
     onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: ['appointments_list'] });
+        queryClient.invalidateQueries({ queryKey: ['patient_history_sidebar'] });
         setDeleteId(null);
         setIsModalOpen(false);
         toast.success('Excluído!');
@@ -258,15 +256,21 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
     const [returnsList, setReturnsList] = useState([]);
     const [newReturnDate, setNewReturnDate] = useState('');
     const [newReturnNote, setNewReturnNote] = useState('');
-    const [patientHistory, setPatientHistory] = useState([]);
 
-    useEffect(() => {
-        if (formData.patient_id) {
-            supabase.from('appointments').select('*').eq('patient_id', formData.patient_id).order('date', { ascending: false }).limit(5).then(({ data }) => setPatientHistory(data || []));
-        } else {
-            setPatientHistory([]);
-        }
-    }, [formData.patient_id]);
+    // --- CORREÇÃO: Usar useQuery para o Histórico Lateral para atualizar em tempo real ---
+    const { data: patientHistory = [] } = useQuery({
+        queryKey: ['patient_history_sidebar', formData.patient_id],
+        queryFn: async () => {
+            if (!formData.patient_id) return [];
+            const { data } = await supabase.from('appointments')
+                .select('*')
+                .eq('patient_id', formData.patient_id)
+                .order('date', { ascending: false })
+                .limit(5);
+            return data || [];
+        },
+        enabled: !!formData.patient_id
+    });
 
     useEffect(() => {
         if (open) {
@@ -290,6 +294,8 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                 setPaymentMethods([]);
                 setReturnsList([]);
             }
+            setNewReturnDate('');
+            setNewReturnNote('');
         }
     }, [initialData, open]);
 
@@ -344,9 +350,11 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="max-w-6xl h-[95vh] flex flex-col p-0 gap-0 bg-stone-50 overflow-hidden">
-                <DialogHeader className="p-6 pb-4 bg-white border-b border-stone-200 shadow-sm z-10">
-                    <DialogTitle className="text-2xl font-serif text-stone-900">{initialData ? 'Editar Atendimento' : 'Novo Atendimento'}</DialogTitle>
-                    <DialogDescription>Preencha os dados clínicos e financeiros.</DialogDescription>
+                <DialogHeader className="p-6 pb-4 bg-white border-b border-stone-200 shadow-sm z-10 flex flex-row justify-between items-center space-y-0">
+                    <div>
+                        <DialogTitle className="text-2xl font-serif text-stone-900">{initialData ? 'Editar Atendimento' : 'Novo Atendimento'}</DialogTitle>
+                        <DialogDescription>Preencha os dados clínicos e financeiros.</DialogDescription>
+                    </div>
                 </DialogHeader>
                 <div className="flex flex-1 overflow-hidden">
                     <ScrollArea className="flex-1 p-6">
@@ -372,12 +380,11 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                 </div>
                             </div>
 
-                            {/* NOVA ÁREA DE DESCRIÇÃO E PLANEJAMENTO */}
                             <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
                                 <h4 className="text-xs font-bold text-stone-400 uppercase tracking-widest flex gap-2"><FileText className="w-4 h-4"/> Planejamento e Descrição</h4>
                                 <Textarea 
                                     className="min-h-[120px] bg-stone-50/50" 
-                                    placeholder="Descreva aqui o planejamento do procedimento, produtos utilizados, áreas de aplicação e observações clínicas detalhadas..."
+                                    placeholder="Descreva aqui o planejamento..."
                                     value={formData.notes}
                                     onChange={e => setFormData({...formData, notes: e.target.value})}
                                 />
