@@ -5,19 +5,23 @@ import PageHeader from '@/components/ui/PageHeader';
 import StatCard from '@/components/ui/StatCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Edit2, Trash2, DollarSign, TrendingDown, TrendingUp, CheckCircle2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { 
+  Plus, Edit2, Trash2, DollarSign, TrendingUp, TrendingDown, 
+  CheckCircle2, CreditCard, ChevronLeft, ChevronRight 
+} from 'lucide-react';
 import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO, startOfYear, endOfYear } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 const EXPENSE_CATEGORIES = ['Aluguel', 'Energia', 'Água', 'Internet', 'Telefone', 'Materiais', 'Equipamentos', 'Marketing', 'Funcionários', 'Impostos', 'Outros'];
+const COLORS = ['#c4a47c', '#78716c', '#d6d3d1'];
 
 export default function Financial() {
   const [isOpen, setIsOpen] = useState(false);
@@ -30,22 +34,38 @@ export default function Financial() {
   const [endDate, setEndDate] = useState('');
   const queryClient = useQueryClient();
 
-  const { data: expenses = [] } = useQuery({ queryKey: ['expenses'], queryFn: async () => { const { data } = await supabase.from('expenses').select('*'); return data || []; } });
-  const { data: installments = [] } = useQuery({ queryKey: ['installments'], queryFn: async () => { const { data } = await supabase.from('installments').select('*'); return data || []; } });
-  const { data: appointments = [] } = useQuery({ queryKey: ['appointments'], queryFn: async () => { const { data } = await supabase.from('appointments').select('*'); return data || []; } });
+  const urlParams = new URLSearchParams(window.location.search);
+  const defaultTab = urlParams.get('tab') || 'overview';
 
-  const saveMutation = useMutation({
-    mutationFn: async (data) => { const { id, ...rest } = data; if (id) await supabase.from('expenses').update(rest).eq('id', id); else await supabase.from('expenses').insert([rest]); },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['expenses'] }); setIsOpen(false); toast.success('Salvo!'); }
-  });
+  const { data: appointments = [] } = useQuery({ queryKey: ['appointments'], queryFn: async () => { const { data } = await supabase.from('appointments').select('*'); return data; } });
+  const { data: expenses = [] } = useQuery({ queryKey: ['expenses'], queryFn: async () => { const { data } = await supabase.from('expenses').select('*').order('due_date', { ascending: false }); return data; } });
+  const { data: installments = [] } = useQuery({ queryKey: ['installments'], queryFn: async () => { const { data } = await supabase.from('installments').select('*').order('due_date', { ascending: false }); return data; } });
 
-  const deleteMutation = useMutation({
-    mutationFn: async (id) => await supabase.from('expenses').delete().eq('id', id),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['expenses'] }); setDeleteExpense(null); toast.success('Excluído'); }
-  });
+  const createMutation = useMutation({ mutationFn: async (data) => { await supabase.from('expenses').insert([data]); }, onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['expenses'] }); setIsOpen(false); toast.success('Despesa cadastrada'); } });
+  const updateMutation = useMutation({ mutationFn: async ({ id, data }) => { await supabase.from('expenses').update(data).eq('id', id); }, onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['expenses'] }); setEditingExpense(null); toast.success('Despesa atualizada'); } });
+  const deleteMutation = useMutation({ mutationFn: async (id) => { await supabase.from('expenses').delete().eq('id', id); }, onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['expenses'] }); setDeleteExpense(null); toast.success('Despesa excluída'); } });
+  const updateInstallmentMutation = useMutation({ mutationFn: async ({ id, data }) => { await supabase.from('installments').update(data).eq('id', id); }, onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['installments'] }); toast.success('Parcela atualizada'); } });
 
-  const toggleInstallment = async (inst) => { await supabase.from('installments').update({ paid: !inst.paid }).eq('id', inst.id); queryClient.invalidateQueries({ queryKey: ['installments'] }); };
-  const toggleExpense = async (exp) => { await supabase.from('expenses').update({ is_paid: !exp.is_paid }).eq('id', exp.id); queryClient.invalidateQueries({ queryKey: ['expenses'] }); };
+  const togglePaid = (expense) => { updateMutation.mutate({ id: expense.id, data: { ...expense, is_paid: !expense.is_paid, payment_date: !expense.is_paid ? format(new Date(), 'yyyy-MM-dd') : null } }); };
+  const toggleInstallmentReceived = (installment) => { updateInstallmentMutation.mutate({ id: installment.id, data: { ...installment, is_received: !installment.is_received, received_date: !installment.is_received ? format(new Date(), 'yyyy-MM-dd') : null } }); };
+
+  const handlePrevMonth = () => {
+    if (selectedMonth === 0) {
+      setSelectedMonth(11);
+      setSelectedYear(selectedYear - 1);
+    } else {
+      setSelectedMonth(selectedMonth - 1);
+    }
+  };
+
+  const handleNextMonth = () => {
+    if (selectedMonth === 11) {
+      setSelectedMonth(0);
+      setSelectedYear(selectedYear + 1);
+    } else {
+      setSelectedMonth(selectedMonth + 1);
+    }
+  };
 
   const getDateRange = () => {
     if (filterType === 'month') return { start: startOfMonth(new Date(selectedYear, selectedMonth)), end: endOfMonth(new Date(selectedYear, selectedMonth)) };
@@ -55,84 +75,109 @@ export default function Financial() {
   };
   const { start, end } = getDateRange();
 
-  const filteredExpenses = expenses.filter(e => isWithinInterval(new Date(e.due_date + 'T12:00:00'), { start, end }));
-  const filteredInstallments = installments.filter(i => isWithinInterval(new Date(i.due_date + 'T12:00:00'), { start, end }));
-  
-  const revenueFromInstallments = filteredInstallments.filter(i => i.paid).reduce((sum, i) => sum + (i.value || 0), 0);
-  const appointmentsWithInstallments = new Set(installments.map(i => i.appointment_id).filter(Boolean));
-  
-  const revenueFromSimpleAppointments = appointments
-    .filter(a => isWithinInterval(new Date(a.date + 'T12:00:00'), { start, end }) && a.status === 'Realizado' && !appointmentsWithInstallments.has(a.id))
-    .reduce((sum, a) => sum + (a.final_value || 0), 0);
+  const filteredAppointments = appointments.filter(a => {
+    if(!a.date) return false;
+    const date = new Date(a.date);
+    return isWithinInterval(date, { start, end }) && a.status === 'Realizado';
+  });
 
-  const totalRevenue = revenueFromInstallments + revenueFromSimpleAppointments;
-  const totalExpenses = filteredExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
-  const profit = totalRevenue - totalExpenses;
+  const filteredExpenses = expenses.filter(e => { if(!e.due_date) return false; return isWithinInterval(new Date(e.due_date), { start, end }); });
+  const filteredInstallments = installments.filter(i => { if(!i.due_date) return false; return isWithinInterval(new Date(i.due_date), { start, end }); });
 
-  const getChartData = () => {
-    const data = [];
-    for (let i = 0; i < 12; i++) {
-        const mStart = startOfMonth(new Date(selectedYear, i));
-        const mEnd = endOfMonth(new Date(selectedYear, i));
-        
-        const mInst = installments.filter(inst => inst.paid && isWithinInterval(new Date(inst.due_date + 'T12:00:00'), { start: mStart, end: mEnd })).reduce((s, i) => s + i.value, 0);
-        
-        const mApts = appointments
-            .filter(a => isWithinInterval(new Date(a.date + 'T12:00:00'), { start: mStart, end: mEnd }) && a.status === 'Realizado' && !appointmentsWithInstallments.has(a.id))
-            .reduce((s, a) => s + (a.final_value || 0), 0);
+  const revenueFromCash = filteredAppointments.reduce((sum, appt) => {
+      const methods = appt.payment_methods_json || [];
+      const cashPart = methods
+        .filter(m => !m.method || !m.method.includes('Crédito'))
+        .reduce((s, m) => s + (Number(m.value) || 0), 0);
+      return sum + cashPart;
+  }, 0);
 
-        const exp = expenses.filter(e => isWithinInterval(new Date(e.due_date + 'T12:00:00'), { start: mStart, end: mEnd })).reduce((s, e) => s + (e.amount || 0), 0);
-        data.push({ name: format(mStart, 'MMM'), faturamento: mInst + mApts, despesas: exp });
-    }
-    return data;
-  };
+  const revenueFromInstallments = filteredInstallments.reduce((sum, i) => sum + (Number(i.value) || 0), 0);
+  const totalRevenue = revenueFromCash + revenueFromInstallments;
+  const totalExpenses = filteredExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const totalMaterialCost = filteredAppointments.reduce((sum, a) => sum + (Number(a.cost_amount) || 0), 0);
+  const profit = totalRevenue - totalExpenses - totalMaterialCost;
+  const pendingInstallmentsValue = filteredInstallments.filter(i => !i.is_received).reduce((sum, i) => sum + (Number(i.value) || 0), 0);
 
-  const changeMonth = (direction) => {
-    if (direction === 'prev') {
-        if (selectedMonth === 0) { setSelectedMonth(11); setSelectedYear(selectedYear - 1); }
-        else setSelectedMonth(selectedMonth - 1);
-    } else {
-        if (selectedMonth === 11) { setSelectedMonth(0); setSelectedYear(selectedYear + 1); }
-        else setSelectedMonth(selectedMonth + 1);
-    }
-  };
+  const pieChartData = [
+    { name: 'Receita (Real)', value: totalRevenue },
+    { name: 'Despesas Fixas', value: totalExpenses },
+    { name: 'Custos Variáveis', value: totalMaterialCost }
+  ].filter(item => item.value > 0);
 
   const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-  const years = Array.from({ length: 21 }, (_, i) => new Date().getFullYear() - 10 + i);
+  const years = [2024, 2025, 2026];
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Financeiro" subtitle="Controle de faturamento e despesas" action={<Button onClick={() => { setEditingExpense(null); setIsOpen(true); }} className="bg-stone-800"><Plus className="w-4 h-4 mr-2" /> Nova Despesa</Button>} />
-      
-      <div className="flex flex-wrap gap-3 p-4 bg-white rounded-xl border border-stone-100 items-center">
-        <Select value={filterType} onValueChange={setFilterType}><SelectTrigger className="w-32"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="month">Por Mês</SelectItem><SelectItem value="year">Por Ano</SelectItem></SelectContent></Select>
-        
+      <PageHeader title="Financeiro" subtitle="Fluxo de caixa" action={<Button onClick={() => setIsOpen(true)} className="bg-stone-900"><Plus className="w-4 h-4 mr-2"/> Nova Despesa</Button>}/>
+      <div className="flex flex-col sm:flex-row gap-4 p-4 bg-white rounded-xl border border-stone-200 shadow-sm items-center justify-between">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+            <Select value={filterType} onValueChange={setFilterType}>
+                <SelectTrigger className="w-full sm:w-32"><SelectValue/></SelectTrigger>
+                <SelectContent><SelectItem value="month">Mês</SelectItem><SelectItem value="year">Ano</SelectItem></SelectContent>
+            </Select>
+        </div>
+
         {filterType === 'month' && (
             <div className="flex items-center gap-2 bg-stone-50 p-1 rounded-lg border border-stone-200">
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => changeMonth('prev')}><ChevronLeft className="w-4 h-4"/></Button>
-                
-                <Select value={selectedMonth.toString()} onValueChange={v => setSelectedMonth(parseInt(v))}><SelectTrigger className="w-32 border-0 bg-transparent shadow-none focus:ring-0"><SelectValue/></SelectTrigger><SelectContent>{months.map((m, i) => <SelectItem key={i} value={i.toString()}>{m}</SelectItem>)}</SelectContent></Select>
-                <div className="w-[1px] h-4 bg-stone-300 mx-1"></div>
-                <Select value={selectedYear.toString()} onValueChange={v => setSelectedYear(parseInt(v))}><SelectTrigger className="w-20 border-0 bg-transparent shadow-none focus:ring-0"><SelectValue/></SelectTrigger><SelectContent>{years.map(y => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent></Select>
-                
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => changeMonth('next')}><ChevronRight className="w-4 h-4"/></Button>
+                <Button variant="ghost" size="icon" onClick={handlePrevMonth} className="h-8 w-8 hover:bg-white"><ChevronLeft className="w-4 h-4"/></Button>
+                <div className="flex gap-2">
+                    <Select value={selectedMonth.toString()} onValueChange={v=>setSelectedMonth(parseInt(v))}>
+                        <SelectTrigger className="w-32 h-8 border-none bg-transparent shadow-none focus:ring-0 font-medium"><SelectValue/></SelectTrigger>
+                        <SelectContent>{months.map((m,i)=><SelectItem key={i} value={i.toString()}>{m}</SelectItem>)}</SelectContent>
+                    </Select>
+                    <Select value={selectedYear.toString()} onValueChange={v=>setSelectedYear(parseInt(v))}>
+                        <SelectTrigger className="w-20 h-8 border-none bg-transparent shadow-none focus:ring-0 font-medium"><SelectValue/></SelectTrigger>
+                        <SelectContent>{years.map(y=><SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent>
+                    </Select>
+                </div>
+                <Button variant="ghost" size="icon" onClick={handleNextMonth} className="h-8 w-8 hover:bg-white"><ChevronRight className="w-4 h-4"/></Button>
             </div>
         )}
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Faturamento" value={`R$ ${totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} icon={DollarSign} />
-        <StatCard title="Despesas" value={`R$ ${totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} icon={TrendingDown} />
-        <StatCard title="Lucro" value={`R$ ${profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} icon={DollarSign} className={profit >= 0 ? '' : 'border-rose-200'} />
+      {/* AJUSTE: Grid máximo de 4 colunas e fonte reduzida nos valores */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard title="Entradas (Caixa)" value={<span className="text-xl sm:text-2xl font-bold">R$ {totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={DollarSign} />
+        <StatCard title="A Receber (Mês)" value={<span className="text-xl sm:text-2xl font-bold">R$ {pendingInstallmentsValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={CreditCard} />
+        <StatCard title="Despesas" value={<span className="text-xl sm:text-2xl font-bold">R$ {totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingDown} />
+        <StatCard title="Custo Mat." value={<span className="text-xl sm:text-2xl font-bold">R$ {totalMaterialCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingDown} />
+        <StatCard title="Líquido Mensal" value={<span className="text-xl sm:text-2xl font-bold">R$ {profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingUp} className={profit>=0?'bg-emerald-50 border-emerald-100':'bg-rose-50 border-rose-100'} />
       </div>
-      <Tabs defaultValue="overview">
-        <TabsList className="bg-stone-100"><TabsTrigger value="overview">Visão Geral</TabsTrigger><TabsTrigger value="expenses">Despesas</TabsTrigger><TabsTrigger value="installments">Entradas (Parcelas/Pagamentos)</TabsTrigger></TabsList>
-        <TabsContent value="overview" className="mt-6"><Card className="bg-white"><CardContent className="h-80 pt-6"><ResponsiveContainer width="100%" height="100%"><BarChart data={getChartData()}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="name"/><YAxis/><Tooltip/><Legend/><Bar dataKey="faturamento" fill="#c4a47c" name="Faturamento"/><Bar dataKey="despesas" fill="#78716c" name="Despesas"/></BarChart></ResponsiveContainer></CardContent></Card></TabsContent>
-        <TabsContent value="expenses" className="mt-6 space-y-3">{filteredExpenses.map(exp => (<Card key={exp.id} className="bg-white"><CardContent className="p-4 flex justify-between items-center"><div className="flex gap-3 items-center"><button onClick={() => toggleExpense(exp)}><CheckCircle2 className={`w-5 h-5 ${exp.is_paid ? 'text-green-500' : 'text-gray-300'}`}/></button><div><p className="font-medium">{exp.description}</p><p className="text-sm text-gray-500">{exp.category} • Vence {format(new Date(exp.due_date + 'T12:00:00'), 'dd/MM/yyyy')}</p></div></div><div className="flex gap-3 items-center"><span className="font-light text-lg">R$ {exp.amount}</span><Button variant="ghost" size="sm" onClick={() => { setEditingExpense(exp); setIsOpen(true); }}><Edit2 className="w-4 h-4"/></Button><Button variant="ghost" size="sm" className="text-red-500" onClick={() => setDeleteExpense(exp)}><Trash2 className="w-4 h-4"/></Button></div></CardContent></Card>))}</TabsContent>
-        <TabsContent value="installments" className="mt-6 space-y-3">{filteredInstallments.map(inst => (<Card key={inst.id} className="bg-white"><CardContent className="p-4 flex justify-between items-center"><div className="flex gap-3 items-center"><button onClick={() => toggleInstallment(inst)}><CheckCircle2 className={`w-5 h-5 ${inst.paid ? 'text-green-500' : 'text-gray-300'}`}/></button><div><p className="font-medium">{inst.description}</p><p className="text-sm text-gray-500">Vence {format(new Date(inst.due_date + 'T12:00:00'), 'dd/MM/yyyy')} • {inst.payment_method}</p></div></div><span className="font-light text-lg">R$ {inst.value.toFixed(2)}</span></CardContent></Card>))}</TabsContent>
+
+      <Tabs defaultValue={defaultTab}>
+        <TabsList className="bg-stone-100 w-full sm:w-auto grid grid-cols-3 sm:flex">
+            <TabsTrigger value="overview">Visão Geral</TabsTrigger>
+            <TabsTrigger value="installments">Parcelas (Crédito)</TabsTrigger>
+            <TabsTrigger value="expenses">Despesas</TabsTrigger>
+        </TabsList>
+        <TabsContent value="overview" className="mt-6">
+          <Card>
+            <CardHeader><CardTitle>Entradas x Saídas (Período)</CardTitle></CardHeader>
+            <CardContent className="h-80">
+              {pieChartData.length > 0 ? (
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie data={pieChartData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} dataKey="value" label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}>
+                      {pieChartData.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}
+                    </Pie>
+                    <Tooltip formatter={(value) => `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : <div className="flex items-center justify-center h-full text-stone-400">Sem dados neste período</div>}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="installments" className="mt-6 space-y-4">{filteredInstallments.map(i=>(<Card key={i.id}><CardContent className="p-4 flex justify-between items-center"><div className="flex gap-4 items-center"><button onClick={()=>toggleInstallmentReceived(i)} className="transition-transform active:scale-95"><CheckCircle2 className={`w-6 h-6 ${i.is_received?'text-emerald-600 fill-emerald-50':'text-stone-300'}`}/></button><div><h3 className="font-bold text-stone-800">{i.patient_name}</h3><div className="flex items-center gap-2 text-xs text-stone-500"><span className="bg-stone-100 px-2 py-0.5 rounded">Parc. {i.installment_number}/{i.total_installments}</span><span>Venc: {format(new Date(i.due_date),'dd/MM/yyyy')}</span></div></div></div><span className="font-bold text-stone-700">R$ {Number(i.value).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span></CardContent></Card>))}</TabsContent>
+        <TabsContent value="expenses" className="mt-6 space-y-4">{filteredExpenses.map(e=>(<ExpenseCard key={e.id} expense={e} onEdit={()=>setEditingExpense(e)} onDelete={()=>setDeleteExpense(e)} onTogglePaid={()=>togglePaid(e)}/>))}</TabsContent>
       </Tabs>
-      <Dialog open={isOpen} onOpenChange={setIsOpen}><DialogContent><DialogHeader><DialogTitle>{editingExpense ? 'Editar' : 'Nova'} Despesa</DialogTitle></DialogHeader><form onSubmit={(e) => { e.preventDefault(); const formData = new FormData(e.target); saveMutation.mutate({ ...Object.fromEntries(formData), id: editingExpense?.id }); }} className="space-y-4"><div><Label>Descrição</Label><Input name="description" defaultValue={editingExpense?.description} required/></div><div className="grid grid-cols-2 gap-4"><div><Label>Categoria</Label><Select name="category" defaultValue={editingExpense?.category}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{EXPENSE_CATEGORIES.map(c=><SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></div><div><Label>Valor</Label><Input name="amount" type="number" step="0.01" defaultValue={editingExpense?.amount} required/></div></div><div><Label>Vencimento</Label><Input name="due_date" type="date" defaultValue={editingExpense?.due_date} required/></div><Button type="submit" className="w-full">Salvar</Button></form></DialogContent></Dialog>
-      <AlertDialog open={!!deleteExpense} onOpenChange={() => setDeleteExpense(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Excluir?</AlertDialogTitle><AlertDialogDescription>Irreversível.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => deleteMutation.mutate(deleteExpense.id)} className="bg-red-600">Excluir</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <ExpenseModal open={isOpen||!!editingExpense} onClose={()=>{setIsOpen(false);setEditingExpense(null)}} expense={editingExpense} onSave={d=>{editingExpense?updateMutation.mutate({id:editingExpense.id,data:d}):createMutation.mutate(d)}}/>
+      <AlertDialog open={!!deleteExpense} onOpenChange={()=>setDeleteExpense(null)}><AlertDialogContent><AlertDialogTitle>Excluir?</AlertDialogTitle><AlertDialogFooter><AlertDialogCancel>Não</AlertDialogCancel><AlertDialogAction onClick={()=>deleteMutation.mutate(deleteExpense.id)}>Sim</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     </div>
   );
 }
+
+function ExpenseCard({ expense, onEdit, onDelete, onTogglePaid }) { return (<Card><CardContent className="p-4 flex justify-between items-center"><div className="flex gap-4"><button onClick={onTogglePaid}><CheckCircle2 className={expense.is_paid?'text-green-600':'text-gray-300'}/></button><div><h3>{expense.description}</h3><Badge variant="outline">{expense.category}</Badge></div></div><div className="flex gap-4"><span>R$ {Number(expense.amount).toFixed(2)}</span><div className="flex gap-2"><Button size="sm" variant="outline" onClick={onEdit}><Edit2 className="w-4 h-4"/></Button><Button size="sm" variant="outline" onClick={onDelete}><Trash2 className="w-4 h-4"/></Button></div></div></CardContent></Card>); }
+function ExpenseModal({ open, onClose, expense, onSave }) { const [form,setForm]=useState({description:'',category:'',amount:'',due_date:format(new Date(),'yyyy-MM-dd'),is_paid:false}); React.useEffect(()=>{if(expense)setForm(expense);else setForm({description:'',category:'',amount:'',due_date:format(new Date(),'yyyy-MM-dd'),is_paid:false})},[expense,open]); return (<Dialog open={open} onOpenChange={onClose}><DialogContent><DialogHeader><DialogTitle>Despesa</DialogTitle></DialogHeader><form onSubmit={e=>{e.preventDefault();onSave(form)}} className="space-y-4"><Input placeholder="Descrição" value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/><div className="grid grid-cols-2 gap-4"><Select value={form.category} onValueChange={v=>setForm({...form,category:v})}><SelectTrigger><SelectValue placeholder="Categoria"/></SelectTrigger><SelectContent>{EXPENSE_CATEGORIES.map(c=><SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select><Input type="number" placeholder="Valor" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/></div><Input type="date" value={form.due_date} onChange={e=>setForm({...form,due_date:e.target.value})}/><div className="flex justify-end gap-3"><Button variant="outline" onClick={onClose}>Cancelar</Button><Button type="submit" className="bg-stone-900">Salvar</Button></div></form></DialogContent></Dialog>); }

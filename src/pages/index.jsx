@@ -1,6 +1,7 @@
 import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
-import Layout from "./Layout";
+import { Routes, Route, useLocation } from 'react-router-dom';
+import Layout from "./Layout.jsx";
+
 import Dashboard from "./Dashboard";
 import Patients from "./Patients";
 import Appointments from "./Appointments";
@@ -11,11 +12,37 @@ import Goals from "./Goals";
 import Reports from "./Reports";
 import Stock from "./Stock";
 
+const PAGES = {
+    Dashboard,
+    Patients,
+    Appointments,
+    Schedule,
+    Financial,
+    Settings,
+    Goals,
+    Reports,
+    Stock,
+}
+
+function _getCurrentPage(url) {
+    if (!url) return 'Dashboard';
+    let path = url.split('?')[0]; // Remove query params
+    if (path.endsWith('/')) path = path.slice(0, -1);
+    const pageName = path.split('/').pop();
+    
+    // Verifica se a página existe no mapa, senão retorna Dashboard
+    const found = Object.keys(PAGES).find(p => p.toLowerCase() === pageName?.toLowerCase());
+    return found || 'Dashboard';
+}
+
 export default function Pages() {
+    const location = useLocation();
+    const currentPage = _getCurrentPage(location.pathname);
+    
     return (
-        <Layout currentPageName="Sistema">
-            <Routes>
-                <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Layout currentPageName={currentPage}>
+            <Routes>            
+                <Route path="/" element={<Dashboard />} />
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/patients" element={<Patients />} />
                 <Route path="/appointments" element={<Appointments />} />
