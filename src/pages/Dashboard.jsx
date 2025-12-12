@@ -34,21 +34,37 @@ export default function Dashboard() {
 
   const handleStatusSelect = (id, newStatus) => { updateStatusMutation.mutate({ id, status: newStatus }); };
   
-  // Função para abrir modal de EDIÇÃO
+  // Funções de Modal
   const handleOpenAppointment = (appt) => { setSelectedAppointment(appt); setIsModalOpen(true); };
+  
+  // Função para criar NOVO retorno (CRM)
+  const handleRecoveryClick = (appt) => {
+      setSelectedAppointment({
+          patient_id: appt.patient_id,
+          date: format(new Date(), 'yyyy-MM-dd'),
+          time: '',
+          status: 'Agendado',
+          type: 'Recorrente', 
+          notes: `Retorno de recuperação (CRM). Última visita: ${format(parseISO(appt.date), 'dd/MM/yyyy')}`
+      });
+      setIsModalOpen(true);
+  };
 
   // --- Cálculos do Dashboard ---
   const stats = useMemo(() => {
     const today = startOfDay(new Date()); 
-    const next7Days = endOfDay(addDays(today, 7));
-    const next15Days = endOfDay(addDays(today, 15));
+    // CORREÇÃO: Aumentei o alcance para 30 dias em ambos os cards para ninguém sumir
+    const next30Days = endOfDay(addDays(today, 30));
+    
     const currentMonthStart = startOfMonth(today);
     const currentMonthEnd = endOfMonth(today);
 
+    // Filtros de Mês Atual (Para Financeiro e Contadores)
     const monthAppts = appointments.filter(a => { const d = parseISO(a.date); return isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd }) && a.status === 'Realizado'; });
     const monthExps = expenses.filter(e => { const d = parseISO(e.due_date); return isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd }); });
     const monthInstallments = installments.filter(i => { const d = parseISO(i.due_date); return isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd }); });
 
+    // Cálculos Financeiros
     const revenueFromCash = monthAppts.reduce((sum, appt) => {
         const methods = appt.payment_methods_json || [];
         const cashPart = methods.filter(m => !m.method || !m.method.includes('Crédito')).reduce((s, m) => s + (Number(m.value) || 0), 0);
@@ -62,8 +78,19 @@ export default function Dashboard() {
     const profit = totalRevenue - totalExpenses;
 
     const birthdays = patients.filter(p => { if (!p.birth_date) return false; const dob = parseISO(p.birth_date); return getDate(dob) === getDate(today) && getMonth(dob) === getMonth(today); });
-    const confirmedList = appointments.filter(a => { const d = parseISO(a.date); return a.status === 'Confirmado' && isWithinInterval(d, { start: today, end: next7Days }); }).sort((a, b) => new Date(a.date) - new Date(b.date));
-    const returnWarnings = appointments.filter(a => { const d = parseISO(a.date); return a.status === 'Agendado' && isWithinInterval(d, { start: today, end: next15Days }); }).sort((a, b) => new Date(a.date) - new Date(b.date));
+    
+    // --- CORREÇÃO NOS FILTROS DE CARDS ---
+    // Agora ambos olham para os próximos 30 dias
+    const confirmedList = appointments.filter(a => { 
+        const d = parseISO(a.date); 
+        return a.status === 'Confirmado' && isWithinInterval(d, { start: today, end: next30Days }); 
+    }).sort((a, b) => new Date(a.date) - new Date(b.date));
+    
+    const returnWarnings = appointments.filter(a => { 
+        const d = parseISO(a.date); 
+        return a.status === 'Agendado' && isWithinInterval(d, { start: today, end: next30Days }); 
+    }).sort((a, b) => new Date(a.date) - new Date(b.date));
+    // -------------------------------------
 
     // Lógica de Recuperação (CRM)
     const recoveryList = [];
@@ -115,7 +142,7 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent className="p-4 overflow-auto flex-1">
                 {stats.recoveryList.length > 0 ? (
-                    <div className="space-y-2">{stats.recoveryList.map(a => (<div key={a.id} className="p-3 bg-purple-50 dark:bg-purple-900/10 border border-purple-100 dark:border-purple-900/30 rounded-lg flex flex-col gap-1 cursor-pointer hover:bg-purple-100 dark:hover:bg-purple-900/30 transition-colors" onClick={() => handleOpenAppointment(a)}><div className="flex justify-between"><span className="text-sm font-bold text-stone-700 dark:text-stone-200">{a.patients?.full_name}</span><span className="text-xs font-bold text-purple-600 dark:text-purple-400">{a.typeName} ({a.monthsAgo}m)</span></div><span className="text-xs text-stone-500 dark:text-stone-400">Último: {format(parseISO(a.date), 'dd/MM/yyyy')}</span></div>))}</div>
+                    <div className="space-y-2">{stats.recoveryList.map(a => (<div key={a.id} className="p-3 bg-purple-50 dark:bg-purple-900/10 border border-purple-100 dark:border-purple-900/30 rounded-lg flex flex-col gap-1 cursor-pointer hover:bg-purple-100 dark:hover:bg-purple-900/30 transition-colors" onClick={() => handleRecoveryClick(a)}><div className="flex justify-between"><span className="text-sm font-bold text-stone-700 dark:text-stone-200">{a.patients?.full_name}</span><span className="text-xs font-bold text-purple-600 dark:text-purple-400">{a.typeName} ({a.monthsAgo}m)</span></div><span className="text-xs text-stone-500 dark:text-stone-400">Último: {format(parseISO(a.date), 'dd/MM/yyyy')}</span></div>))}</div>
                 ) : <div className="text-xs text-stone-400 text-center py-10">Nenhum paciente para recuperação.</div>}
             </CardContent>
         </Card>
@@ -132,27 +159,27 @@ export default function Dashboard() {
             </CardContent>
         </Card>
 
-        {/* Confirmados */}
+        {/* Confirmados (Agora 30d) */}
         <Card className="border-stone-200 shadow-sm h-[500px] flex flex-col bg-white">
             <CardHeader className="pb-2 p-4 bg-emerald-50/50 dark:bg-emerald-900/20 border-b border-emerald-100 dark:border-emerald-900/30">
-                <div className="flex justify-between items-center"><CardTitle className="text-sm font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-2"><Calendar className="w-4 h-4" /> Confirmados (7d)</CardTitle><Badge className="bg-emerald-500 text-white">{stats.confirmedList.length}</Badge></div>
+                <div className="flex justify-between items-center"><CardTitle className="text-sm font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-2"><Calendar className="w-4 h-4" /> Confirmados (30d)</CardTitle><Badge className="bg-emerald-500 text-white">{stats.confirmedList.length}</Badge></div>
             </CardHeader>
             <CardContent className="p-4 overflow-auto flex-1">
                 {stats.confirmedList.length > 0 ? (
                     <div className="space-y-2">{stats.confirmedList.map(a => (<div key={a.id} className="p-3 bg-white border border-stone-100 rounded-lg hover:shadow-md transition-all group flex justify-between items-center" onClick={() => handleOpenAppointment(a)}><div className="cursor-pointer flex-1"><div className="flex gap-2 mb-1"><span className="text-xs font-bold text-stone-500">{format(parseISO(a.date), 'dd/MM')} - {a.time}</span></div><p className="font-bold text-stone-800 text-sm group-hover:text-emerald-700">{a.patients?.full_name}</p></div><DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" className="h-6 text-[10px] px-2 bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200" onClick={(e) => e.stopPropagation()}>OK</Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => handleStatusSelect(a.id, 'Realizado')}><CheckCircle2 className="w-4 h-4 mr-2"/> Realizado</DropdownMenuItem><DropdownMenuItem onClick={() => handleStatusSelect(a.id, 'Cancelado')}><XCircle className="w-4 h-4 mr-2"/> Cancelar</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>))}</div>
-                ) : <div className="text-xs text-stone-400 text-center py-10">Nenhum confirmado.</div>}
+                ) : <div className="text-xs text-stone-400 text-center py-10">Nenhum confirmado (30 dias).</div>}
             </CardContent>
         </Card>
 
-        {/* Agendados (Avisos) */}
+        {/* Agendados (Agora 30d) */}
         <Card className="border-stone-200 shadow-sm h-[500px] flex flex-col bg-white">
             <CardHeader className="pb-2 p-4 bg-amber-50/50 dark:bg-amber-900/20 border-b border-amber-100 dark:border-amber-900/30">
-                <div className="flex justify-between items-center"><CardTitle className="text-sm font-bold text-amber-700 dark:text-amber-300 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Agendados (15d)</CardTitle><Badge className="bg-amber-500 text-white">{stats.returnWarnings.length}</Badge></div>
+                <div className="flex justify-between items-center"><CardTitle className="text-sm font-bold text-amber-700 dark:text-amber-300 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Agendados (30d)</CardTitle><Badge className="bg-amber-500 text-white">{stats.returnWarnings.length}</Badge></div>
             </CardHeader>
             <CardContent className="p-4 overflow-auto flex-1">
                 {stats.returnWarnings.length > 0 ? (
                     <div className="space-y-2">{stats.returnWarnings.map(a => (<div key={a.id} className="p-3 bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 rounded-lg hover:bg-amber-100 transition-all relative flex justify-between items-center" onClick={() => handleOpenAppointment(a)}><div className="cursor-pointer flex-1"><div className="flex items-center gap-1 mb-1"><span className="text-xs font-bold text-amber-700">{format(parseISO(a.date), 'dd/MM')}</span></div><p className="font-bold text-stone-800 text-sm">{a.patients?.full_name}</p></div><DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" className="h-6 text-[10px] px-2 bg-white border-amber-300 text-amber-700 hover:bg-amber-50" onClick={(e) => e.stopPropagation()}>Ver</Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => handleStatusSelect(a.id, 'Confirmado')}><CheckCircle2 className="w-4 h-4 mr-2"/> Confirmar</DropdownMenuItem><DropdownMenuItem onClick={() => handleStatusSelect(a.id, 'Cancelado')}><XCircle className="w-4 h-4 mr-2"/> Cancelar</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>))}</div>
-                ) : <div className="text-xs text-stone-400 text-center py-10">Nenhum pendente.</div>}
+                ) : <div className="text-xs text-stone-400 text-center py-10">Nenhum pendente (30 dias).</div>}
             </CardContent>
         </Card>
       </div>
@@ -162,30 +189,24 @@ export default function Dashboard() {
         onOpenChange={setIsModalOpen}
         initialData={selectedAppointment}
         
-        // Função de Excluir: Apaga o agendamento e limpa o paciente
         onDelete={async (id) => {
-            // 1. Busca dados do agendamento para saber quem é o paciente
             const { data: appt } = await supabase.from('appointments').select('patient_id').eq('id', id).single();
-            
-            // 2. Exclui o agendamento e dependências
             await supabase.from('stock_movements').delete().eq('appointment_id', id);
             await supabase.from('installments').delete().eq('appointment_id', id);
             await supabase.from('appointments').delete().eq('id', id);
 
-            // 3. ATUALIZA O PACIENTE: Limpa a data de retorno (deixa NULL)
             if (appt && appt.patient_id) {
-                await supabase.from('patients').update({ 
-                    next_return_date: null 
-                }).eq('id', appt.patient_id);
+                // A atualização da data correta será feita automaticamente pelo GATILHO SQL que criamos
+                // Mas podemos forçar NULL aqui se quiser garantir
+                await supabase.from('patients').update({ next_return_date: null }).eq('id', appt.patient_id);
             }
 
-            // 4. Atualiza a tela
             queryClient.invalidateQueries({ queryKey: ['appointments_list'] });
             queryClient.invalidateQueries({ queryKey: ['patients'] });
             queryClient.invalidateQueries({ queryKey: ['expenses'] });
             queryClient.invalidateQueries({ queryKey: ['installments'] });
             setIsModalOpen(false);
-            toast.success('Agendamento excluído e retorno limpo!');
+            toast.success('Excluído!');
         }}
 
         onSave={async (data) => {
@@ -199,7 +220,6 @@ export default function Dashboard() {
             };
             
             let appointmentId = id;
-            
             if (id) {
                 await supabase.from('appointments').update(payload).eq('id', id);
             } else {
@@ -207,13 +227,9 @@ export default function Dashboard() {
                 appointmentId = newApp.id;
             }
 
-            if (payload.patient_id && payload.date) {
-                await supabase.from('patients').update({
-                    next_return_date: payload.date,
-                    is_active: true
-                }).eq('id', payload.patient_id);
-            }
-
+            // O GATILHO SQL cuidará de atualizar a tabela 'patients' (next_return_date) automaticamente
+            // pois ele roda a cada INSERT ou UPDATE na tabela appointments.
+            
             if (returns_to_create && returns_to_create.length > 0) {
                 const returnsPayload = returns_to_create.map(ret => ({
                     patient_id: payload.patient_id,

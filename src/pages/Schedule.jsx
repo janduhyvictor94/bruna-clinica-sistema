@@ -12,13 +12,11 @@ import { ptBR } from 'date-fns/locale';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { AppointmentModal } from './Appointments';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
-import { ScrollArea } from "@/components/ui/scroll-area"; // <--- ESTA IMPORTAÇÃO ESTAVA FALTANDO
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 export default function Schedule() {
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [viewYear, setViewYear] = useState(new Date().getFullYear());
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAppointment, setEditingAppointment] = useState(null);
   const queryClient = useQueryClient();
@@ -33,19 +31,6 @@ export default function Schedule() {
       if (error) throw error;
       return data;
     },
-  });
-
-  // Mutation para mudar status rápido na agenda
-  const updateStatusMutation = useMutation({
-    mutationFn: async ({ id, status }) => {
-      const { error } = await supabase.from('appointments').update({ status }).eq('id', id);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['appointments'] });
-      toast.success('Status atualizado!');
-    },
-    onError: (e) => toast.error('Erro ao atualizar: ' + e.message)
   });
 
   const monthEvents = useMemo(() => {
@@ -71,10 +56,10 @@ export default function Schedule() {
   };
 
   const statusColor = (s) => {
-      if(s==='Confirmado') return 'bg-green-600 border-green-600';
-      if(s==='Cancelado') return 'bg-red-500 border-red-500';
-      if(s==='Realizado') return 'bg-stone-500 border-stone-500';
-      return 'bg-blue-500 border-blue-500';
+      if(s==='Confirmado') return 'bg-emerald-600 hover:bg-emerald-700 border-emerald-600 text-white';
+      if(s==='Cancelado') return 'bg-rose-500 hover:bg-rose-600 border-rose-500 text-white';
+      if(s==='Realizado') return 'bg-stone-500 hover:bg-stone-600 border-stone-500 text-white';
+      return 'bg-blue-500 hover:bg-blue-600 border-blue-500 text-white'; // Agendado
   };
 
   return (
@@ -97,32 +82,20 @@ export default function Schedule() {
               <ScrollArea className="flex-1">
                   <div className="divide-y divide-stone-100">
                       {monthEvents.length > 0 ? monthEvents.map(evt => (
-                          <div key={evt.id} className="p-3 hover:bg-stone-50 transition-colors flex items-start gap-3 group">
+                          <div key={evt.id} className="p-3 hover:bg-stone-50 transition-colors flex items-start gap-3 group cursor-pointer" onClick={() => handleOpen(evt)}>
                               <div className="flex flex-col items-center min-w-[40px] bg-stone-100 rounded p-1">
                                   <span className="text-xs font-bold text-stone-600">{format(parseISO(evt.date), 'dd')}</span>
                                   <span className="text-[10px] text-stone-400 uppercase">{format(parseISO(evt.date), 'EEE', {locale: ptBR})}</span>
                               </div>
-                              <div className="flex-1 min-w-0" onClick={() => handleOpen(evt)}>
-                                  <p className="text-sm font-bold text-stone-800 line-clamp-1 cursor-pointer hover:underline">
+                              <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-bold text-stone-800 line-clamp-1 group-hover:text-blue-600 transition-colors">
                                     {evt.patients?.full_name || 'Paciente s/ nome'}
                                   </p>
                                   <div className="flex items-center gap-2 mt-1">
                                       <Badge variant="outline" className="text-[10px] h-5">{evt.time}</Badge>
-                                      {/* Status Clicável na Lista Lateral */}
-                                      <DropdownMenu>
-                                        <DropdownMenuTrigger asChild>
-                                            <span className={`cursor-pointer text-[10px] px-2 py-0.5 rounded-full text-white ${statusColor(evt.status)}`}>
-                                                {evt.status}
-                                            </span>
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent>
-                                            {['Agendado', 'Confirmado', 'Realizado', 'Cancelado'].map(s => (
-                                                <DropdownMenuItem key={s} onClick={() => updateStatusMutation.mutate({id: evt.id, status: s})}>
-                                                    {s}
-                                                </DropdownMenuItem>
-                                            ))}
-                                        </DropdownMenuContent>
-                                      </DropdownMenu>
+                                      <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ${statusColor(evt.status)}`}>
+                                          {evt.status}
+                                      </span>
                                   </div>
                               </div>
                           </div>
@@ -131,9 +104,9 @@ export default function Schedule() {
               </ScrollArea>
           </Card>
 
-          {/* CALENDÁRIO */}
+          {/* CALENDÁRIO VISUAL */}
           <div className="flex-1 flex flex-col gap-4">
-              <div className="flex items-center justify-between bg-white p-2 px-4 rounded-xl border border-stone-200">
+              <div className="flex items-center justify-between bg-white p-2 px-4 rounded-xl border border-stone-200 shadow-sm">
                 <Button variant="ghost" size="icon" onClick={() => setCurrentDate(subMonths(currentDate, 1))}><ChevronLeft className="w-5 h-5"/></Button>
                 <span className="text-lg font-bold text-stone-800 capitalize">{format(currentDate, 'MMMM yyyy', { locale: ptBR })}</span>
                 <Button variant="ghost" size="icon" onClick={() => setCurrentDate(addMonths(currentDate, 1))}><ChevronRight className="w-5 h-5"/></Button>
@@ -149,8 +122,15 @@ export default function Schedule() {
                           const isToday = isSameDay(day, new Date());
                           const dayEvents = getEventsForDay(day);
                           return (
-                              <div key={i} className={`min-h-[100px] border-b border-r border-stone-100 p-1 relative hover:bg-stone-50 transition-colors ${!isCurrentMonth ? 'bg-stone-50/50' : ''}`} 
-                                   onClick={() => { setEditingAppointment(null); setIsModalOpen(true); }}>
+                              <div key={i} 
+                                   className={`min-h-[100px] border-b border-r border-stone-100 p-1 relative transition-colors ${!isCurrentMonth ? 'bg-stone-50/40' : 'bg-white'} hover:bg-stone-50 cursor-pointer`} 
+                                   onClick={(e) => { 
+                                      // Se clicar na célula vazia, abre modal para criar novo nesse dia
+                                      if(e.target === e.currentTarget) {
+                                          setEditingAppointment({ date: format(day, 'yyyy-MM-dd') });
+                                          setIsModalOpen(true);
+                                      }
+                                   }}>
                                   <div className={`text-xs font-medium mb-1 flex justify-center`}>
                                       <span className={`w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-stone-900 text-white' : isCurrentMonth ? 'text-stone-700' : 'text-stone-300'}`}>
                                           {format(day, 'd')}
@@ -158,26 +138,18 @@ export default function Schedule() {
                                   </div>
                                   <div className="space-y-1">
                                       {dayEvents.map(ev => (
-                                          <DropdownMenu key={ev.id}>
-                                            <DropdownMenuTrigger asChild>
-                                                <div 
-                                                    className={`text-[10px] px-1.5 py-1 rounded truncate text-white cursor-pointer hover:opacity-90 shadow-sm border-l-2 ${statusColor(ev.status)}`}
-                                                    onClick={(e) => e.stopPropagation()} // Impede abrir modal de criar novo
-                                                >
-                                                    <span className="font-bold mr-1">{ev.time}</span>
-                                                    {ev.patients?.full_name || 'Paciente'}
-                                                </div>
-                                            </DropdownMenuTrigger>
-                                            <DropdownMenuContent align="start">
-                                                <div className="px-2 py-1 text-xs font-bold text-stone-500 border-b mb-1">{ev.patients?.full_name}</div>
-                                                <DropdownMenuItem onClick={() => handleOpen(ev)}>📝 Editar / Ver Detalhes</DropdownMenuItem>
-                                                {['Agendado', 'Confirmado', 'Realizado', 'Cancelado'].map(s => (
-                                                    <DropdownMenuItem key={s} onClick={() => updateStatusMutation.mutate({id: ev.id, status: s})}>
-                                                        Mudar para: {s}
-                                                    </DropdownMenuItem>
-                                                ))}
-                                            </DropdownMenuContent>
-                                          </DropdownMenu>
+                                          <div 
+                                              key={ev.id}
+                                              className={`text-[10px] px-1.5 py-1 rounded truncate shadow-sm border-l-2 cursor-pointer transition-transform active:scale-95 ${statusColor(ev.status)}`}
+                                              onClick={(e) => {
+                                                  e.stopPropagation(); // Não deixa clicar na célula, clica só no evento
+                                                  handleOpen(ev);
+                                              }}
+                                              title={`${ev.time} - ${ev.patients?.full_name}`}
+                                          >
+                                              <span className="font-bold mr-1">{ev.time}</span>
+                                              {ev.patients?.full_name || 'Paciente'}
+                                          </div>
                                       ))}
                                   </div>
                               </div>
@@ -192,7 +164,119 @@ export default function Schedule() {
         open={isModalOpen} 
         onOpenChange={setIsModalOpen} 
         initialData={editingAppointment}
-        onSave={() => {}} 
+        
+        onDelete={async (id) => {
+            const { data: appt } = await supabase.from('appointments').select('patient_id').eq('id', id).single();
+            await supabase.from('stock_movements').delete().eq('appointment_id', id);
+            await supabase.from('installments').delete().eq('appointment_id', id);
+            await supabase.from('appointments').delete().eq('id', id);
+
+            if (appt && appt.patient_id) {
+               // Atualiza o paciente para limpar data de retorno se necessário
+               await supabase.from('patients').update({ next_return_date: null }).eq('id', appt.patient_id);
+            }
+
+            queryClient.invalidateQueries({ queryKey: ['appointments'] });
+            queryClient.invalidateQueries({ queryKey: ['patients'] });
+            setIsModalOpen(false);
+            toast.success('Excluído!');
+        }}
+
+        onSave={async (data) => {
+            const { id, returns_to_create, ...rawData } = data;
+            
+            // 1. Prepara os dados
+            const payload = {
+                patient_id: rawData.patient_id, date: rawData.date, time: rawData.time, status: rawData.status,
+                type: rawData.type, notes: rawData.notes, payment_methods_json: rawData.payment_methods, 
+                procedures_json: rawData.procedures_json, materials_json: rawData.materials_json,
+                total_amount: Number(rawData.total_amount)||0, cost_amount: Number(rawData.cost_amount)||0,
+                profit_amount: Number(rawData.profit_amount)||0, discount_percent: Number(rawData.discount_percent)||0
+            };
+            
+            let appointmentId = id;
+            
+            // 2. Salva (Insert ou Update)
+            if (id) {
+                await supabase.from('appointments').update(payload).eq('id', id);
+            } else {
+                const { data: newApp } = await supabase.from('appointments').insert([payload]).select().single();
+                appointmentId = newApp.id;
+            }
+
+            // 3. Atualiza Paciente (Data de Retorno)
+            if (payload.patient_id && payload.date) {
+                await supabase.from('patients').update({
+                    next_return_date: payload.date,
+                    is_active: true
+                }).eq('id', payload.patient_id);
+            }
+
+            // 4. Cria Novos Retornos (Recorrência)
+            if (returns_to_create && returns_to_create.length > 0) {
+                const returnsPayload = returns_to_create.map(ret => ({
+                    patient_id: payload.patient_id,
+                    date: ret.date,
+                    notes: `Retorno Automático: ${ret.note || ''}`,
+                    status: 'Agendado',
+                    type: 'Recorrente'
+                }));
+                await supabase.from('appointments').insert(returnsPayload);
+            }
+
+            // 5. Lógica de "Realizado" (Estoque e Financeiro)
+            if (payload.status === 'Realizado') {
+                // Limpa movimentos antigos para evitar duplicação ao editar
+                await supabase.from('stock_movements').delete().eq('appointment_id', appointmentId);
+                await supabase.from('installments').delete().eq('appointment_id', appointmentId);
+
+                if (rawData.materials_json?.length > 0) {
+                   const { data: dbMaterials } = await supabase.from('materials').select('id, name, stock_quantity, cost_per_unit');
+                   const movementsPayload = [];
+                   for (const matItem of rawData.materials_json) {
+                       const dbMat = dbMaterials?.find(m => m.name === matItem.name);
+                       if (dbMat) {
+                           const qty = 1; 
+                           await supabase.from('materials').update({ stock_quantity: (dbMat.stock_quantity||0) - qty }).eq('id', dbMat.id);
+                           movementsPayload.push({
+                               material_id: dbMat.id, appointment_id: appointmentId, type: 'saida', quantity: qty,
+                               previous_stock: dbMat.stock_quantity, new_stock: (dbMat.stock_quantity||0) - qty,
+                               cost_per_unit: dbMat.cost_per_unit, total_cost: Number(matItem.cost)||0, reason: 'Uso em atendimento',
+                               date: payload.date, material_name: dbMat.name, patient_name: rawData.patient_name_ref
+                           });
+                       }
+                   }
+                   if (movementsPayload.length) await supabase.from('stock_movements').insert(movementsPayload);
+                }
+
+                if (rawData.payment_methods?.length > 0) {
+                    const installmentsPayload = [];
+                    rawData.payment_methods.forEach(pm => {
+                        const isCredit = pm.method && pm.method.includes('Crédito');
+                        if (isCredit) {
+                            const totalVal = Number(pm.value)||0; const num = Number(pm.installments)||1;
+                            const valPerInst = totalVal/num;
+                            for(let i=1; i<=num; i++) {
+                                const due = new Date(payload.date); due.setMonth(due.getMonth() + (i-1));
+                                installmentsPayload.push({
+                                    appointment_id: appointmentId, patient_name: rawData.patient_name_ref,
+                                    installment_number: i, total_installments: num, value: valPerInst,
+                                    due_date: due.toISOString(), is_received: false
+                                });
+                            }
+                        }
+                    });
+                    if (installmentsPayload.length) await supabase.from('installments').insert(installmentsPayload);
+                }
+            }
+
+            queryClient.invalidateQueries({ queryKey: ['appointments'] });
+            queryClient.invalidateQueries({ queryKey: ['patients'] });
+            queryClient.invalidateQueries({ queryKey: ['expenses'] });
+            queryClient.invalidateQueries({ queryKey: ['installments'] });
+            setIsModalOpen(false);
+            toast.success('Salvo!');
+        }} 
       />
     </div>
   );
