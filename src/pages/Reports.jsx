@@ -25,7 +25,6 @@ export default function Reports() {
   const { data: patients = [] } = useQuery({ queryKey: ['patients'], queryFn: async () => { const { data } = await supabase.from('patients').select('*'); return data; } });
   const { data: stockMovements = [] } = useQuery({ queryKey: ['stock-movements'], queryFn: async () => { const { data } = await supabase.from('stock_movements').select('*'); return data; } });
 
-  // --- NAVEGAÇÃO ENTRE MESES (SETAS) ---
   const handlePrevMonth = () => { if (selectedMonth === 0) { setSelectedMonth(11); setSelectedYear(selectedYear - 1); } else { setSelectedMonth(selectedMonth - 1); } };
   const handleNextMonth = () => { if (selectedMonth === 11) { setSelectedMonth(0); setSelectedYear(selectedYear + 1); } else { setSelectedMonth(selectedMonth + 1); } };
 
@@ -68,36 +67,34 @@ export default function Reports() {
             <Select value={selectedPatientId || 'all'} onValueChange={(v) => setSelectedPatientId(v === 'all' ? null : v)}><SelectTrigger className="w-full sm:w-48 text-sm"><SelectValue placeholder="Todos os pacientes" /></SelectTrigger><SelectContent><SelectItem value="all">Todos os pacientes</SelectItem>{patients.map(p => (<SelectItem key={p.id} value={p.id}>{p.full_name}</SelectItem>))}</SelectContent></Select>
         </div>
         {filterType === 'month' && (
-          <div className="flex items-center gap-2 bg-stone-50 p-1 rounded-lg border border-stone-200">
-            <Button variant="ghost" size="icon" onClick={handlePrevMonth} className="h-8 w-8 hover:bg-white"><ChevronLeft className="w-4 h-4"/></Button>
+          <div className="flex items-center gap-2 bg-stone-50 p-1 rounded-lg border border-stone-200 dark:bg-stone-800 dark:border-stone-700">
+            <Button variant="ghost" size="icon" onClick={handlePrevMonth} className="h-8 w-8 hover:bg-white dark:hover:bg-stone-700"><ChevronLeft className="w-4 h-4"/></Button>
             <div className="flex gap-2">
                 <Select value={selectedMonth.toString()} onValueChange={(v) => setSelectedMonth(parseInt(v))}><SelectTrigger className="flex-1 w-32 h-8 border-none bg-transparent shadow-none font-medium"><SelectValue /></SelectTrigger><SelectContent>{months.map((m, i) => (<SelectItem key={i} value={i.toString()}>{m}</SelectItem>))}</SelectContent></Select>
                 <Select value={selectedYear.toString()} onValueChange={(v) => setSelectedYear(parseInt(v))}><SelectTrigger className="w-20 h-8 border-none bg-transparent shadow-none font-medium"><SelectValue /></SelectTrigger><SelectContent>{years.map(y => (<SelectItem key={y} value={y.toString()}>{y}</SelectItem>))}</SelectContent></Select>
             </div>
-            <Button variant="ghost" size="icon" onClick={handleNextMonth} className="h-8 w-8 hover:bg-white"><ChevronRight className="w-4 h-4"/></Button>
+            <Button variant="ghost" size="icon" onClick={handleNextMonth} className="h-8 w-8 hover:bg-white dark:hover:bg-stone-700"><ChevronRight className="w-4 h-4"/></Button>
           </div>
         )}
       </div>
 
-      {/* AJUSTE: Grid máximo de 4 colunas e fonte reduzida */}
       {selectedPatientId ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard title="Atendimentos" value={filteredAppointments.length} icon={FileText} />
-          <StatCard title="Total Investido" value={<span className="text-xl font-bold">R$ {filteredAppointments.reduce((sum, a) => sum + (Number(a.total_amount) || 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={DollarSign} />
-          <StatCard title="Custo Mat." value={<span className="text-xl font-bold">R$ {totalMaterialCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={Package} />
-          <StatCard title="Ticket Médio" value={<span className="text-xl font-bold">R$ {(filteredAppointments.length > 0 ? (filteredAppointments.reduce((sum, a) => sum + (Number(a.total_amount) || 0), 0) / filteredAppointments.length) : 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingUp} />
+          <StatCard title="Total Investido" value={<span className="text-xl font-bold tracking-tight">R$ {filteredAppointments.reduce((sum, a) => sum + (Number(a.total_amount) || 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={DollarSign} />
+          <StatCard title="Custo Mat." value={<span className="text-xl font-bold tracking-tight">R$ {totalMaterialCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={Package} />
+          <StatCard title="Ticket Médio" value={<span className="text-xl font-bold tracking-tight">R$ {(filteredAppointments.length > 0 ? (filteredAppointments.reduce((sum, a) => sum + (Number(a.total_amount) || 0), 0) / filteredAppointments.length) : 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingUp} />
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard title="Novos" value={newPatients} icon={UserPlus} />
           <StatCard title="Recorrentes" value={returningPatients} icon={UserCheck} />
           <StatCard title="Atendimentos" value={filteredAppointments.length} icon={Users} />
-          <StatCard title="Custo Mat." value={<span className="text-xl font-bold">R$ {totalMaterialCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={Package} />
-          <StatCard title="Lucro" value={<span className="text-xl font-bold">R$ {(filteredAppointments.reduce((sum, a) => sum + (Number(a.total_amount) || 0), 0) - totalMaterialCost).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingUp} />
+          <StatCard title="Custo Mat." value={<span className="text-xl font-bold tracking-tight">R$ {totalMaterialCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={Package} />
+          <StatCard title="Lucro" value={<span className="text-xl font-bold tracking-tight">R$ {(filteredAppointments.reduce((sum, a) => sum + (Number(a.total_amount) || 0), 0) - totalMaterialCost).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingUp} />
         </div>
       )}
 
-      {/* Demais gráficos (PieCharts) */}
       {!selectedPatientId && (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -108,7 +105,7 @@ export default function Reports() {
             <Card className="bg-white border-stone-100"><CardHeader className="p-4"><CardTitle>Pacientes por Gênero</CardTitle></CardHeader><CardContent className="p-4 h-64"><ResponsiveContainer><PieChart><Pie data={genderPieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>{genderPieData.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}</Pie><Tooltip /></PieChart></ResponsiveContainer></CardContent></Card>
             <Card className="bg-white border-stone-100"><CardHeader className="p-4"><CardTitle>Faturamento por Gênero</CardTitle></CardHeader><CardContent className="p-4 h-64"><ResponsiveContainer><PieChart><Pie data={genderRevenueData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>{genderRevenueData.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}</Pie><Tooltip /></PieChart></ResponsiveContainer></CardContent></Card>
           </div>
-          <Card className="bg-white border-stone-100"><CardHeader className="p-4"><CardTitle>Pacientes por Canal (Origem)</CardTitle></CardHeader><CardContent className="p-4 h-80"><ResponsiveContainer><PieChart><Pie data={originPieData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} dataKey="value" label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>{originPieData.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></CardContent></Card>
+          <Card className="bg-white border-stone-100"><CardHeader className="p-4"><CardTitle>Pacientes por Canal (Origem)</CardTitle></CardHeader><CardContent className="p-4 h-80"><ResponsiveContainer><PieChart><Pie data={originPieData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} dataKey="value" label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>{originPieData.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}</Pie><Tooltip /></PieChart></ResponsiveContainer></CardContent></Card>
         </>
       )}
       <Card className="bg-white border-stone-100"><CardHeader className="p-4"><CardTitle>Procedimentos Mais Realizados</CardTitle></CardHeader><CardContent className="p-4 pt-2">{topProcedures.length > 0 ? (<div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b"><th className="text-left py-2">Procedimento</th><th className="text-center py-2">Qtd</th><th className="text-right py-2 hidden sm:table-cell">Faturamento</th><th className="text-right py-2 hidden sm:table-cell">Custo</th><th className="text-right py-2">Lucro</th></tr></thead><tbody>{topProcedures.map((p, i) => (<tr key={i} className="border-b"><td className="py-2">{p.name}</td><td className="py-2 text-center">{p.count}</td><td className="py-2 text-right hidden sm:table-cell">R$ {p.revenue.toFixed(0)}</td><td className="py-2 text-right hidden sm:table-cell text-amber-600">R$ {p.materialCost.toFixed(0)}</td><td className="py-2 text-right text-emerald-600">R$ {p.profit.toFixed(0)}</td></tr>))}</tbody></table></div>) : <div className="text-center py-12 text-stone-400">Sem procedimentos no período</div>}</CardContent></Card>

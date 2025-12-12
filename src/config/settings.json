@@ -1,0 +1,31 @@
+{
+  "key": "dashboard_remarketing",
+  "title": "Configuração - Remarketing de Pacientes",
+  "description": "Defina os parâmetros para identificar e recuperar pacientes inativos.",
+  "settings": [
+    {
+      "key": "dias_ausencia",
+      "title": "Dias de Ausência",
+      "description": "Número de dias sem contato para considerar o paciente inativo (ex: 90 ou 180).",
+      "type": "number",
+      "default": 180,
+      "required": true
+    },
+    {
+      "key": "meta_recuperacao",
+      "title": "Meta Mensal de Recuperação",
+      "description": "Quantidade de pacientes que você deseja trazer de volta por mês.",
+      "type": "number",
+      "default": 50,
+      "required": true
+    },
+    {
+      "key": "tag_paciente_id",
+      "title": "ID da Tag de Paciente",
+      "description": "ID da Tag que identifica que o contato é um paciente (deixe 0 para considerar todos).",
+      "type": "number",
+      "default": 0,
+      "required": false
+    }
+  ]
+}

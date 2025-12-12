@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter } from 'react-router-dom'; // <--- Importação Nova
+import { BrowserRouter } from 'react-router-dom';
 import { supabase } from './supabase';
 import Login from './pages/Login'; 
 import Pages from "@/pages/index.jsx"; 
@@ -33,12 +33,12 @@ function App() {
     return <div className="flex h-screen items-center justify-center">Carregando...</div>;
   }
 
-  // Se não estiver logado, mostra Login (sem Router, pois Login não precisa navegar internamente)
+  // Se não estiver logado, mostra Login
   if (!session) {
     return <Login />;
   }
 
-  // Se estiver logado, mostra o Sistema COM O ROUTER (A Correção está aqui)
+  // Se estiver logado, mostra o Sistema (Gerenciado por Pages/index.jsx)
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>

@@ -12,8 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Plus, Edit2, Trash2, DollarSign, TrendingUp, TrendingDown, 
-  CheckCircle2, CreditCard, ChevronLeft, ChevronRight,
-  PieChart as PieIcon
+  CheckCircle2, CreditCard, ChevronLeft, ChevronRight 
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO, startOfYear, endOfYear } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -31,8 +30,6 @@ export default function Financial() {
   const [filterType, setFilterType] = useState('month');
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
   const queryClient = useQueryClient();
 
   const urlParams = new URLSearchParams(window.location.search);
@@ -50,36 +47,23 @@ export default function Financial() {
   const togglePaid = (expense) => { updateMutation.mutate({ id: expense.id, data: { ...expense, is_paid: !expense.is_paid, payment_date: !expense.is_paid ? format(new Date(), 'yyyy-MM-dd') : null } }); };
   const toggleInstallmentReceived = (installment) => { updateInstallmentMutation.mutate({ id: installment.id, data: { ...installment, is_received: !installment.is_received, received_date: !installment.is_received ? format(new Date(), 'yyyy-MM-dd') : null } }); };
 
-  const handlePrevMonth = () => {
-    if (selectedMonth === 0) { setSelectedMonth(11); setSelectedYear(selectedYear - 1); } else { setSelectedMonth(selectedMonth - 1); }
-  };
-
-  const handleNextMonth = () => {
-    if (selectedMonth === 11) { setSelectedMonth(0); setSelectedYear(selectedYear + 1); } else { setSelectedMonth(selectedMonth + 1); }
-  };
+  const handlePrevMonth = () => { if (selectedMonth === 0) { setSelectedMonth(11); setSelectedYear(selectedYear - 1); } else { setSelectedMonth(selectedMonth - 1); } };
+  const handleNextMonth = () => { if (selectedMonth === 11) { setSelectedMonth(0); setSelectedYear(selectedYear + 1); } else { setSelectedMonth(selectedMonth + 1); } };
 
   const getDateRange = () => {
     if (filterType === 'month') return { start: startOfMonth(new Date(selectedYear, selectedMonth)), end: endOfMonth(new Date(selectedYear, selectedMonth)) };
     if (filterType === 'year') return { start: startOfYear(new Date(selectedYear, 0)), end: endOfYear(new Date(selectedYear, 0)) };
-    if (filterType === 'custom' && startDate && endDate) return { start: parseISO(startDate), end: parseISO(endDate) };
     return { start: new Date(0), end: new Date() };
   };
   const { start, end } = getDateRange();
 
-  const filteredAppointments = appointments.filter(a => {
-    if(!a.date) return false;
-    const date = new Date(a.date);
-    return isWithinInterval(date, { start, end }) && a.status === 'Realizado';
-  });
-
+  const filteredAppointments = appointments.filter(a => { if(!a.date) return false; const date = new Date(a.date); return isWithinInterval(date, { start, end }) && a.status === 'Realizado'; });
   const filteredExpenses = expenses.filter(e => { if(!e.due_date) return false; return isWithinInterval(new Date(e.due_date), { start, end }); });
   const filteredInstallments = installments.filter(i => { if(!i.due_date) return false; return isWithinInterval(new Date(i.due_date), { start, end }); });
 
   const revenueFromCash = filteredAppointments.reduce((sum, appt) => {
       const methods = appt.payment_methods_json || [];
-      const cashPart = methods
-        .filter(m => !m.method || !m.method.includes('Crédito'))
-        .reduce((s, m) => s + (Number(m.value) || 0), 0);
+      const cashPart = methods.filter(m => !m.method || !m.method.includes('Crédito')).reduce((s, m) => s + (Number(m.value) || 0), 0);
       return sum + cashPart;
   }, 0);
 
@@ -96,7 +80,7 @@ export default function Financial() {
     { name: 'Custos Variáveis', value: totalMaterialCost }
   ].filter(item => item.value > 0);
 
-  // --- NOVA LÓGICA PARA O RELATÓRIO DE PAGAMENTOS ---
+  // --- LÓGICA DO RELATÓRIO DE PAGAMENTOS (REINTEGRADA) ---
   const paymentStats = useMemo(() => {
     const stats = {};
     
@@ -129,6 +113,10 @@ export default function Financial() {
   const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
   const years = [2024, 2025, 2026];
 
+  const liquidCardClass = profit >= 0 
+    ? 'bg-emerald-50 border-emerald-200 dark:bg-emerald-950 dark:border-emerald-800 text-emerald-900 dark:text-emerald-100' 
+    : 'bg-rose-50 border-rose-200 dark:bg-rose-950 dark:border-rose-800 text-rose-900 dark:text-rose-100';
+
   return (
     <div className="space-y-6">
       <PageHeader title="Financeiro" subtitle="Fluxo de caixa" action={<Button onClick={() => setIsOpen(true)} className="bg-stone-900"><Plus className="w-4 h-4 mr-2"/> Nova Despesa</Button>}/>
@@ -139,31 +127,24 @@ export default function Financial() {
                 <SelectContent><SelectItem value="month">Mês</SelectItem><SelectItem value="year">Ano</SelectItem></SelectContent>
             </Select>
         </div>
-
         {filterType === 'month' && (
-            <div className="flex items-center gap-2 bg-stone-50 p-1 rounded-lg border border-stone-200">
-                <Button variant="ghost" size="icon" onClick={handlePrevMonth} className="h-8 w-8 hover:bg-white"><ChevronLeft className="w-4 h-4"/></Button>
+            <div className="flex items-center gap-2 bg-stone-50 p-1 rounded-lg border border-stone-200 dark:bg-stone-800 dark:border-stone-700">
+                <Button variant="ghost" size="icon" onClick={handlePrevMonth} className="h-8 w-8 hover:bg-white dark:hover:bg-stone-700"><ChevronLeft className="w-4 h-4"/></Button>
                 <div className="flex gap-2">
-                    <Select value={selectedMonth.toString()} onValueChange={v=>setSelectedMonth(parseInt(v))}>
-                        <SelectTrigger className="w-32 h-8 border-none bg-transparent shadow-none focus:ring-0 font-medium"><SelectValue/></SelectTrigger>
-                        <SelectContent>{months.map((m,i)=><SelectItem key={i} value={i.toString()}>{m}</SelectItem>)}</SelectContent>
-                    </Select>
-                    <Select value={selectedYear.toString()} onValueChange={v=>setSelectedYear(parseInt(v))}>
-                        <SelectTrigger className="w-20 h-8 border-none bg-transparent shadow-none focus:ring-0 font-medium"><SelectValue/></SelectTrigger>
-                        <SelectContent>{years.map(y=><SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent>
-                    </Select>
+                    <Select value={selectedMonth.toString()} onValueChange={v=>setSelectedMonth(parseInt(v))}><SelectTrigger className="w-32 h-8 border-none bg-transparent shadow-none focus:ring-0 font-medium"><SelectValue/></SelectTrigger><SelectContent>{months.map((m,i)=><SelectItem key={i} value={i.toString()}>{m}</SelectItem>)}</SelectContent></Select>
+                    <Select value={selectedYear.toString()} onValueChange={v=>setSelectedYear(parseInt(v))}><SelectTrigger className="w-20 h-8 border-none bg-transparent shadow-none focus:ring-0 font-medium"><SelectValue/></SelectTrigger><SelectContent>{years.map(y=><SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent></Select>
                 </div>
-                <Button variant="ghost" size="icon" onClick={handleNextMonth} className="h-8 w-8 hover:bg-white"><ChevronRight className="w-4 h-4"/></Button>
+                <Button variant="ghost" size="icon" onClick={handleNextMonth} className="h-8 w-8 hover:bg-white dark:hover:bg-stone-700"><ChevronRight className="w-4 h-4"/></Button>
             </div>
         )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Entradas (Caixa)" value={<span className="text-xl sm:text-2xl font-bold">R$ {totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={DollarSign} />
-        <StatCard title="A Receber (Mês)" value={<span className="text-xl sm:text-2xl font-bold">R$ {pendingInstallmentsValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={CreditCard} />
-        <StatCard title="Despesas" value={<span className="text-xl sm:text-2xl font-bold">R$ {totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingDown} />
-        <StatCard title="Custo Mat." value={<span className="text-xl sm:text-2xl font-bold">R$ {totalMaterialCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingDown} />
-        <StatCard title="Líquido Mensal" value={<span className="text-xl sm:text-2xl font-bold">R$ {profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingUp} className={profit>=0?'bg-emerald-50 border-emerald-100':'bg-rose-50 border-rose-100'} />
+        <StatCard title="Entradas (Caixa)" value={<span className="text-xl font-bold tracking-tight">R$ {totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={DollarSign} />
+        <StatCard title="A Receber (Mês)" value={<span className="text-xl font-bold tracking-tight">R$ {pendingInstallmentsValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={CreditCard} />
+        <StatCard title="Despesas" value={<span className="text-xl font-bold tracking-tight">R$ {totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingDown} />
+        <StatCard title="Custo Mat." value={<span className="text-xl font-bold tracking-tight">R$ {totalMaterialCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingDown} />
+        <StatCard title="Líquido Mensal" value={<span className="text-xl font-bold tracking-tight">R$ {profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingUp} className={liquidCardClass} />
       </div>
 
       <Tabs defaultValue={defaultTab}>
@@ -171,9 +152,9 @@ export default function Financial() {
             <TabsTrigger value="overview">Visão Geral</TabsTrigger>
             <TabsTrigger value="installments">Parcelas (Crédito)</TabsTrigger>
             <TabsTrigger value="expenses">Despesas</TabsTrigger>
-            <TabsTrigger value="payments">Relatório Pagamentos</TabsTrigger> {/* NOVA ABA */}
+            {/* ABA REINSERIDA */}
+            <TabsTrigger value="payments">Relatório Pagamentos</TabsTrigger>
         </TabsList>
-        
         <TabsContent value="overview" className="mt-6">
           <Card>
             <CardHeader><CardTitle>Entradas x Saídas (Período)</CardTitle></CardHeader>
@@ -192,20 +173,10 @@ export default function Financial() {
             </CardContent>
           </Card>
         </TabsContent>
+        <TabsContent value="installments" className="mt-6 space-y-4">{filteredInstallments.map(i=>(<Card key={i.id}><CardContent className="p-4 flex justify-between items-center"><div className="flex gap-4 items-center"><button onClick={()=>toggleInstallmentReceived(i)} className="transition-transform active:scale-95"><CheckCircle2 className={`w-6 h-6 ${i.is_received?'text-emerald-600 fill-emerald-50':'text-stone-300'}`}/></button><div><h3 className="font-bold text-stone-800 dark:text-stone-200">{i.patient_name}</h3><div className="flex items-center gap-2 text-xs text-stone-500"><span className="bg-stone-100 dark:bg-stone-800 px-2 py-0.5 rounded">Parc. {i.installment_number}/{i.total_installments}</span><span>Venc: {format(new Date(i.due_date),'dd/MM/yyyy')}</span></div></div></div><span className="font-bold text-stone-700 dark:text-stone-300">R$ {Number(i.value).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span></CardContent></Card>))}</TabsContent>
+        <TabsContent value="expenses" className="mt-6 space-y-4">{filteredExpenses.map(e=>(<ExpenseCard key={e.id} expense={e} onEdit={()=>setEditingExpense(e)} onDelete={()=>setDeleteExpense(e)} onTogglePaid={()=>togglePaid(e)}/>))}</TabsContent>
         
-        <TabsContent value="installments" className="mt-6 space-y-4">
-            {filteredInstallments.length > 0 ? filteredInstallments.map(i=>(
-                <Card key={i.id}><CardContent className="p-4 flex justify-between items-center"><div className="flex gap-4 items-center"><button onClick={()=>toggleInstallmentReceived(i)} className="transition-transform active:scale-95"><CheckCircle2 className={`w-6 h-6 ${i.is_received?'text-emerald-600 fill-emerald-50':'text-stone-300'}`}/></button><div><h3 className="font-bold text-stone-800">{i.patient_name}</h3><div className="flex items-center gap-2 text-xs text-stone-500"><span className="bg-stone-100 px-2 py-0.5 rounded">Parc. {i.installment_number}/{i.total_installments}</span><span>Venc: {format(new Date(i.due_date),'dd/MM/yyyy')}</span></div></div></div><span className="font-bold text-stone-700">R$ {Number(i.value).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span></CardContent></Card>
-            )) : <div className="text-center py-10 text-stone-400">Nenhuma parcela para este mês.</div>}
-        </TabsContent>
-        
-        <TabsContent value="expenses" className="mt-6 space-y-4">
-            {filteredExpenses.length > 0 ? filteredExpenses.map(e=>(
-                <ExpenseCard key={e.id} expense={e} onEdit={()=>setEditingExpense(e)} onDelete={()=>setDeleteExpense(e)} onTogglePaid={()=>togglePaid(e)}/>
-            )) : <div className="text-center py-10 text-stone-400">Nenhuma despesa neste mês.</div>}
-        </TabsContent>
-
-        {/* NOVA ABA: RELATÓRIO DE PAGAMENTOS */}
+        {/* CONTEÚDO DA NOVA ABA DE PAGAMENTOS */}
         <TabsContent value="payments" className="mt-6 space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Card>
@@ -229,7 +200,7 @@ export default function Financial() {
                     <CardContent>
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm text-left">
-                                <thead className="text-xs text-stone-500 uppercase bg-stone-50">
+                                <thead className="text-xs text-stone-500 uppercase bg-stone-50 dark:bg-stone-800">
                                     <tr>
                                         <th className="px-4 py-2">Método</th>
                                         <th className="px-4 py-2 text-center">Qtd</th>
@@ -239,7 +210,7 @@ export default function Financial() {
                                 </thead>
                                 <tbody>
                                     {paymentStats.map((stat, index) => (
-                                        <tr key={index} className="border-b border-stone-100 last:border-0 hover:bg-stone-50">
+                                        <tr key={index} className="border-b border-stone-100 dark:border-stone-800 last:border-0 hover:bg-stone-50 dark:hover:bg-stone-800/50">
                                             <td className="px-4 py-3 font-medium">{stat.name}</td>
                                             <td className="px-4 py-3 text-center">{stat.count}</td>
                                             <td className="px-4 py-3 text-right">R$ {stat.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>

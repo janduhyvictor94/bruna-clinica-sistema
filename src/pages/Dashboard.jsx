@@ -1,14 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import { supabase } from '../supabase';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { startOfDay, endOfDay, addDays, isWithinInterval, getDate, getMonth, parseISO, startOfMonth, endOfMonth } from 'date-fns';
+import { startOfDay, endOfDay, addDays, isWithinInterval, getDate, getMonth, parseISO, startOfMonth, endOfMonth, differenceInMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale'; 
 import PageHeader from '@/components/ui/PageHeader';
 import StatCard from '@/components/ui/StatCard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Cake, Calendar, AlertTriangle, Clock, CheckCircle2, XCircle, RotateCcw, DollarSign, TrendingUp, TrendingDown } from 'lucide-react';
+import { Cake, Calendar, AlertTriangle, Clock, CheckCircle2, XCircle, RotateCcw, DollarSign, TrendingUp, TrendingDown, Syringe } from 'lucide-react';
 import { format } from 'date-fns';
 import { AppointmentModal } from './Appointments';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -19,248 +19,130 @@ export default function Dashboard() {
   const [selectedAppointment, setSelectedAppointment] = useState(null);
   const queryClient = useQueryClient();
 
-  // --- QUERIES ---
-  const { data: appointments = [] } = useQuery({ 
-    queryKey: ['appointments_list'], 
-    queryFn: async () => { 
-      const { data, error } = await supabase.from('appointments').select('*, patients(*)'); 
-      if (error) throw error;
-      return data || []; 
-    } 
-  });
-  
-  const { data: patients = [] } = useQuery({ 
-    queryKey: ['patients'], 
-    queryFn: async () => { const { data } = await supabase.from('patients').select('*'); return data || []; } 
-  });
+  const { data: appointments = [] } = useQuery({ queryKey: ['appointments_list'], queryFn: async () => { const { data } = await supabase.from('appointments').select('*, patients(*)'); return data || []; } });
+  const { data: patients = [] } = useQuery({ queryKey: ['patients'], queryFn: async () => { const { data } = await supabase.from('patients').select('*'); return data || []; } });
+  const { data: expenses = [] } = useQuery({ queryKey: ['expenses'], queryFn: async () => { const { data } = await supabase.from('expenses').select('*'); return data || []; } });
+  const { data: installments = [] } = useQuery({ queryKey: ['installments'], queryFn: async () => { const { data } = await supabase.from('installments').select('*'); return data || []; } });
 
-  const { data: expenses = [] } = useQuery({
-    queryKey: ['expenses'],
-    queryFn: async () => { const { data } = await supabase.from('expenses').select('*'); return data || []; }
-  });
-
-  // ADICIONADO: Buscar parcelas para calcular o fluxo real do mês
-  const { data: installments = [] } = useQuery({
-    queryKey: ['installments'],
-    queryFn: async () => { const { data } = await supabase.from('installments').select('*'); return data || []; }
-  });
-
-  // --- MUTATION STATUS ---
   const updateStatusMutation = useMutation({
-    mutationFn: async ({ id, status }) => {
-      const { error } = await supabase.from('appointments').update({ status }).eq('id', id);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['appointments_list'] });
-      toast.success('Status atualizado!');
-    },
+    mutationFn: async ({ id, status }) => { const { error } = await supabase.from('appointments').update({ status }).eq('id', id); if (error) throw error; },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['appointments_list'] }); toast.success('Status atualizado!'); },
     onError: (e) => toast.error("Erro: " + e.message)
   });
 
-  const handleStatusSelect = (id, newStatus) => {
-      updateStatusMutation.mutate({ id, status: newStatus });
-  };
+  const handleStatusSelect = (id, newStatus) => { updateStatusMutation.mutate({ id, status: newStatus }); };
+  const handleOpenAppointment = (appt) => { setSelectedAppointment(appt); setIsModalOpen(true); };
 
-  const handleOpenAppointment = (appt) => {
-      setSelectedAppointment(appt);
-      setIsModalOpen(true);
-  };
-
-  // --- ESTATÍSTICAS ---
   const stats = useMemo(() => {
     const today = startOfDay(new Date()); 
     const next7Days = endOfDay(addDays(today, 7));
     const next15Days = endOfDay(addDays(today, 15));
-    
-    // Filtros de Data para o Mês Atual
     const currentMonthStart = startOfMonth(today);
     const currentMonthEnd = endOfMonth(today);
 
-    // 1. Filtrar Atendimentos Realizados no Mês (Para contar Qtd e Custos de Material)
-    const monthAppts = appointments.filter(a => {
-        const d = parseISO(a.date);
-        return isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd }) && a.status === 'Realizado';
-    });
+    const monthAppts = appointments.filter(a => { const d = parseISO(a.date); return isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd }) && a.status === 'Realizado'; });
+    const monthExps = expenses.filter(e => { const d = parseISO(e.due_date); return isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd }); });
+    const monthInstallments = installments.filter(i => { const d = parseISO(i.due_date); return isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd }); });
 
-    // 2. Filtrar Despesas Fixas do Mês
-    const monthExps = expenses.filter(e => {
-        const d = parseISO(e.due_date);
-        return isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd });
-    });
-
-    // 3. Filtrar Parcelas de Cartão que caem neste Mês
-    const monthInstallments = installments.filter(i => {
-        const d = parseISO(i.due_date);
-        return isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd });
-    });
-
-    // --- CÁLCULO FINANCEIRO REAL (IGUAL AO FINANCIAL.JSX) ---
-    
-    // A. Receita de Pagamentos à Vista (Dinheiro/Pix/Débito) dos atendimentos deste mês
     const revenueFromCash = monthAppts.reduce((sum, appt) => {
         const methods = appt.payment_methods_json || [];
-        const cashPart = methods
-          .filter(m => !m.method || !m.method.includes('Crédito'))
-          .reduce((s, m) => s + (Number(m.value) || 0), 0);
+        const cashPart = methods.filter(m => !m.method || !m.method.includes('Crédito')).reduce((s, m) => s + (Number(m.value) || 0), 0);
         return sum + cashPart;
     }, 0);
-
-    // B. Receita de Parcelas de Cartão (Independente de quando foi o atendimento, o que importa é o vencimento da parcela)
     const revenueFromInstallments = monthInstallments.reduce((sum, i) => sum + (Number(i.value) || 0), 0);
-
     const totalRevenue = revenueFromCash + revenueFromInstallments;
-
-    // C. Despesas
     const fixedExpenses = monthExps.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
     const variableCosts = monthAppts.reduce((sum, a) => sum + (Number(a.cost_amount) || 0), 0);
     const totalExpenses = fixedExpenses + variableCosts;
-
     const profit = totalRevenue - totalExpenses;
 
-    // --- OUTROS DADOS ---
-    const birthdays = patients.filter(p => { 
-        if (!p.birth_date) return false; 
-        const dob = parseISO(p.birth_date); 
-        return getDate(dob) === getDate(today) && getMonth(dob) === getMonth(today); 
+    const birthdays = patients.filter(p => { if (!p.birth_date) return false; const dob = parseISO(p.birth_date); return getDate(dob) === getDate(today) && getMonth(dob) === getMonth(today); });
+    const confirmedList = appointments.filter(a => { const d = parseISO(a.date); return a.status === 'Confirmado' && isWithinInterval(d, { start: today, end: next7Days }); }).sort((a, b) => new Date(a.date) - new Date(b.date));
+    const returnWarnings = appointments.filter(a => { const d = parseISO(a.date); return a.status === 'Agendado' && isWithinInterval(d, { start: today, end: next15Days }); }).sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    const recoveryList = [];
+    const processedRecovery = new Set();
+    const sortedAppts = [...appointments].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    sortedAppts.forEach(appt => {
+        if (!processedRecovery.has(appt.patient_id) && appt.status === 'Realizado') {
+            const procs = appt.procedures_json || [];
+            const hasBotox = procs.some(p => p.name?.toLowerCase().includes('botox') || p.name?.toLowerCase().includes('toxina'));
+            const hasFiller = procs.some(p => p.name?.toLowerCase().includes('preenchimento') || p.name?.toLowerCase().includes('harmonização'));
+            let targetMin = 0, targetMax = 0, type = '';
+
+            if (hasBotox) { targetMin = 4; targetMax = 7; type = 'Toxina'; }
+            else if (hasFiller) { targetMin = 10; targetMax = 14; type = 'Preenchimento'; }
+
+            if (targetMin > 0) {
+                const date = parseISO(appt.date);
+                const monthsDiff = differenceInMonths(today, date);
+                if (monthsDiff >= targetMin && monthsDiff <= targetMax) {
+                    const hasFuture = appointments.some(fut => fut.patient_id === appt.patient_id && new Date(fut.date) > today && fut.status !== 'Cancelado');
+                    if (!hasFuture) recoveryList.push({ ...appt, monthsAgo: monthsDiff, typeName: type });
+                }
+            }
+            processedRecovery.add(appt.patient_id);
+        }
     });
 
-    const confirmedList = appointments.filter(a => {
-        const d = parseISO(a.date);
-        return a.status === 'Confirmado' && isWithinInterval(d, { start: today, end: next7Days });
-    }).sort((a, b) => new Date(a.date) - new Date(b.date));
-
-    const returnWarnings = appointments.filter(a => {
-        const d = parseISO(a.date);
-        return a.status === 'Agendado' && isWithinInterval(d, { start: today, end: next15Days });
-    }).sort((a, b) => new Date(a.date) - new Date(b.date));
-
-    return { birthdays, confirmedList, returnWarnings, totalRevenue, totalExpenses, profit, monthCount: monthAppts.length };
+    return { birthdays, confirmedList, returnWarnings, recoveryList, totalRevenue, totalExpenses, profit, monthCount: monthAppts.length };
   }, [appointments, patients, expenses, installments]);
 
   return (
     <div className="space-y-6 sm:space-y-8">
       <PageHeader title="Dashboard" subtitle={`Visão geral de ${format(new Date(), 'MMMM', { locale: ptBR })}`} />
 
-      {/* --- LINHA DE DADOS FINANCEIROS DO MÊS --- */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          title="Faturamento (Mês)"
-          value={`R$ ${stats.totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-          icon={DollarSign}
-        />
-        <StatCard
-          title="Despesas (Mês)"
-          value={`R$ ${stats.totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-          icon={TrendingDown}
-        />
-        <StatCard
-          title="Líquido (Mês)"
-          value={`R$ ${stats.profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-          icon={TrendingUp}
-          className={stats.profit >= 0 ? 'border-emerald-200 bg-emerald-50' : 'border-rose-200 bg-rose-50'}
-        />
-        <StatCard
-          title="Realizados (Mês)"
-          value={stats.monthCount}
-          icon={Calendar}
-        />
+        {/* CORREÇÃO AQUI TAMBÉM */}
+        <StatCard title="Faturamento (Mês)" value={<span className="text-lg sm:text-xl font-bold tracking-tight">R$ {stats.totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={DollarSign} />
+        <StatCard title="Despesas (Mês)" value={<span className="text-lg sm:text-xl font-bold tracking-tight">R$ {stats.totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingDown} />
+        <StatCard title="Líquido (Mês)" value={<span className="text-lg sm:text-xl font-bold tracking-tight">R$ {stats.profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingUp} className={stats.profit >= 0 ? 'border-emerald-200 bg-emerald-50 dark:bg-emerald-900/20' : 'border-rose-200 bg-rose-50 dark:bg-rose-900/20'} />
+        <StatCard title="Realizados (Mês)" value={stats.monthCount} icon={Calendar} />
       </div>
 
-      {/* --- COLUNAS DE AVISOS --- */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        
-        {/* COLUNA 1: ANIVERSARIANTES */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
         <Card className="border-stone-200 shadow-sm h-[500px] flex flex-col bg-white">
-            <CardHeader className="pb-2 p-4 bg-pink-50/50 border-b border-pink-100">
-                <CardTitle className="text-sm font-bold text-pink-700 flex items-center gap-2"><Cake className="w-4 h-4" /> Aniversariantes (Hoje)</CardTitle>
+            <CardHeader className="pb-2 p-4 bg-purple-50/50 dark:bg-purple-900/20 border-b border-purple-100 dark:border-purple-900/30">
+                <div className="flex justify-between items-center"><CardTitle className="text-sm font-bold text-purple-700 dark:text-purple-300 flex items-center gap-2"><Syringe className="w-4 h-4" /> Retorno (CRM)</CardTitle><Badge className="bg-purple-500 text-white">{stats.recoveryList.length}</Badge></div>
+            </CardHeader>
+            <CardContent className="p-4 overflow-auto flex-1">
+                {stats.recoveryList.length > 0 ? (
+                    <div className="space-y-2">{stats.recoveryList.map(a => (<div key={a.id} className="p-3 bg-purple-50 dark:bg-purple-900/10 border border-purple-100 dark:border-purple-900/30 rounded-lg flex flex-col gap-1 cursor-pointer hover:bg-purple-100 dark:hover:bg-purple-900/30 transition-colors" onClick={() => handleOpenAppointment(a)}><div className="flex justify-between"><span className="text-sm font-bold text-stone-700 dark:text-stone-200">{a.patients?.full_name}</span><span className="text-xs font-bold text-purple-600 dark:text-purple-400">{a.typeName} ({a.monthsAgo}m)</span></div><span className="text-xs text-stone-500 dark:text-stone-400">Último: {format(parseISO(a.date), 'dd/MM/yyyy')}</span></div>))}</div>
+                ) : <div className="text-xs text-stone-400 text-center py-10">Nenhum paciente para recuperação.</div>}
+            </CardContent>
+        </Card>
+
+        <Card className="border-stone-200 shadow-sm h-[500px] flex flex-col bg-white">
+            <CardHeader className="pb-2 p-4 bg-pink-50/50 dark:bg-pink-900/20 border-b border-pink-100 dark:border-pink-900/30">
+                <CardTitle className="text-sm font-bold text-pink-700 dark:text-pink-300 flex items-center gap-2"><Cake className="w-4 h-4" /> Aniversariantes (Hoje)</CardTitle>
             </CardHeader>
             <CardContent className="p-4 overflow-auto flex-1">
                 {stats.birthdays.length > 0 ? (
-                    <div className="space-y-2">
-                        {stats.birthdays.map(p => (
-                            <div key={p.id} className="p-3 bg-pink-50 border border-pink-100 rounded-lg flex items-center justify-between">
-                                <span className="text-sm font-medium text-stone-700">{p.full_name}</span>
-                                <Badge className="bg-pink-200 text-pink-800 hover:bg-pink-200 border-none">Parabéns!</Badge>
-                            </div>
-                        ))}
-                    </div>
+                    <div className="space-y-2">{stats.birthdays.map(p => (<div key={p.id} className="p-3 bg-pink-50 dark:bg-pink-900/10 border border-pink-100 dark:border-pink-900/30 rounded-lg flex items-center justify-between"><span className="text-sm font-medium text-stone-700 dark:text-stone-200">{p.full_name}</span><Badge className="bg-pink-200 dark:bg-pink-900 text-pink-800 dark:text-pink-100 border-none">Parabéns!</Badge></div>))}</div>
                 ) : <div className="text-xs text-stone-400 text-center py-10">Nenhum aniversariante hoje.</div>}
             </CardContent>
         </Card>
 
-        {/* COLUNA 2: CONFIRMADOS */}
         <Card className="border-stone-200 shadow-sm h-[500px] flex flex-col bg-white">
-            <CardHeader className="pb-2 p-4 bg-emerald-50/50 border-b border-emerald-100">
-                <div className="flex justify-between items-center">
-                    <CardTitle className="text-sm font-bold text-emerald-700 flex items-center gap-2"><Calendar className="w-4 h-4" /> Confirmados (7 dias)</CardTitle>
-                    <Badge className="bg-emerald-500 text-white">{stats.confirmedList.length}</Badge>
-                </div>
+            <CardHeader className="pb-2 p-4 bg-emerald-50/50 dark:bg-emerald-900/20 border-b border-emerald-100 dark:border-emerald-900/30">
+                <div className="flex justify-between items-center"><CardTitle className="text-sm font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-2"><Calendar className="w-4 h-4" /> Confirmados (7d)</CardTitle><Badge className="bg-emerald-500 text-white">{stats.confirmedList.length}</Badge></div>
             </CardHeader>
             <CardContent className="p-4 overflow-auto flex-1">
                 {stats.confirmedList.length > 0 ? (
-                    <div className="space-y-2">
-                        {stats.confirmedList.map(a => (
-                            <div key={a.id} className="p-3 bg-white border border-stone-100 rounded-lg hover:shadow-md transition-all group flex justify-between items-center" onClick={() => handleOpenAppointment(a)}>
-                                <div className="cursor-pointer flex-1">
-                                    <div className="flex gap-2 mb-1">
-                                        <span className="text-xs font-bold text-stone-500">{format(parseISO(a.date), 'dd/MM')} - {a.time}</span>
-                                        <Badge variant="outline" className="text-[10px] border-stone-200 text-stone-500">{a.type}</Badge>
-                                    </div>
-                                    <p className="font-bold text-stone-800 text-sm group-hover:text-emerald-700">{a.patients?.full_name}</p>
-                                </div>
-                                <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                        <Button variant="outline" className="h-6 text-[10px] px-2 bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200" onClick={(e) => e.stopPropagation()}>Confirmado</Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                        <DropdownMenuItem onClick={() => handleStatusSelect(a.id, 'Realizado')}><CheckCircle2 className="w-4 h-4 mr-2"/> Realizado</DropdownMenuItem>
-                                        <DropdownMenuItem onClick={() => handleStatusSelect(a.id, 'Cancelado')}><XCircle className="w-4 h-4 mr-2"/> Cancelar</DropdownMenuItem>
-                                        <DropdownMenuItem onClick={() => handleStatusSelect(a.id, 'Agendado')}><RotateCcw className="w-4 h-4 mr-2"/> Voltar para Agendado</DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                </DropdownMenu>
-                            </div>
-                        ))}
-                    </div>
-                ) : <div className="text-xs text-stone-400 text-center py-10">Nenhum atendimento confirmado.</div>}
+                    <div className="space-y-2">{stats.confirmedList.map(a => (<div key={a.id} className="p-3 bg-white border border-stone-100 rounded-lg hover:shadow-md transition-all group flex justify-between items-center" onClick={() => handleOpenAppointment(a)}><div className="cursor-pointer flex-1"><div className="flex gap-2 mb-1"><span className="text-xs font-bold text-stone-500">{format(parseISO(a.date), 'dd/MM')} - {a.time}</span></div><p className="font-bold text-stone-800 text-sm group-hover:text-emerald-700">{a.patients?.full_name}</p></div><DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" className="h-6 text-[10px] px-2 bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200" onClick={(e) => e.stopPropagation()}>OK</Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => handleStatusSelect(a.id, 'Realizado')}><CheckCircle2 className="w-4 h-4 mr-2"/> Realizado</DropdownMenuItem><DropdownMenuItem onClick={() => handleStatusSelect(a.id, 'Cancelado')}><XCircle className="w-4 h-4 mr-2"/> Cancelar</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>))}</div>
+                ) : <div className="text-xs text-stone-400 text-center py-10">Nenhum confirmado.</div>}
             </CardContent>
         </Card>
 
-        {/* COLUNA 3: AGENDADOS (AVISOS) */}
         <Card className="border-stone-200 shadow-sm h-[500px] flex flex-col bg-white">
-            <CardHeader className="pb-2 p-4 bg-amber-50/50 border-b border-amber-100">
-                <div className="flex justify-between items-center">
-                    <CardTitle className="text-sm font-bold text-amber-700 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Agendados (15d)</CardTitle>
-                    <Badge className="bg-amber-500 text-white">{stats.returnWarnings.length}</Badge>
-                </div>
+            <CardHeader className="pb-2 p-4 bg-amber-50/50 dark:bg-amber-900/20 border-b border-amber-100 dark:border-amber-900/30">
+                <div className="flex justify-between items-center"><CardTitle className="text-sm font-bold text-amber-700 dark:text-amber-300 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Agendados (15d)</CardTitle><Badge className="bg-amber-500 text-white">{stats.returnWarnings.length}</Badge></div>
             </CardHeader>
             <CardContent className="p-4 overflow-auto flex-1">
                 {stats.returnWarnings.length > 0 ? (
-                    <div className="space-y-2">
-                        {stats.returnWarnings.map(a => (
-                            <div key={a.id} className="p-3 bg-amber-50 border border-amber-100 rounded-lg hover:bg-amber-100 transition-all relative flex justify-between items-center" onClick={() => handleOpenAppointment(a)}>
-                                <div className="cursor-pointer flex-1">
-                                    <div className="flex items-center gap-1 mb-1">
-                                        <Clock className="w-3 h-3 text-amber-600"/> 
-                                        <span className="text-xs font-bold text-amber-700">{format(parseISO(a.date), 'dd/MM/yyyy')}</span>
-                                        <span className="text-[10px] text-amber-600 ml-2 border border-amber-200 px-1 rounded bg-white">{a.type}</span>
-                                    </div>
-                                    <p className="font-bold text-stone-800 text-sm">{a.patients?.full_name}</p>
-                                    <p className="text-xs text-stone-500 mt-1 line-clamp-1">{a.notes || 'Sem observações'}</p>
-                                </div>
-                                <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                        <Button variant="outline" className="h-6 text-[10px] px-2 bg-white border-amber-300 text-amber-700 hover:bg-amber-50" onClick={(e) => e.stopPropagation()}>Agendado</Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                        <DropdownMenuItem onClick={() => handleStatusSelect(a.id, 'Confirmado')}><CheckCircle2 className="w-4 h-4 mr-2"/> Confirmar</DropdownMenuItem>
-                                        <DropdownMenuItem onClick={() => handleStatusSelect(a.id, 'Cancelado')}><XCircle className="w-4 h-4 mr-2"/> Cancelar</DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                </DropdownMenu>
-                            </div>
-                        ))}
-                    </div>
-                ) : <div className="text-xs text-stone-400 text-center py-10">Nenhum agendamento pendente.</div>}
+                    <div className="space-y-2">{stats.returnWarnings.map(a => (<div key={a.id} className="p-3 bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 rounded-lg hover:bg-amber-100 transition-all relative flex justify-between items-center" onClick={() => handleOpenAppointment(a)}><div className="cursor-pointer flex-1"><div className="flex items-center gap-1 mb-1"><span className="text-xs font-bold text-amber-700">{format(parseISO(a.date), 'dd/MM')}</span></div><p className="font-bold text-stone-800 text-sm">{a.patients?.full_name}</p></div><DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" className="h-6 text-[10px] px-2 bg-white border-amber-300 text-amber-700 hover:bg-amber-50" onClick={(e) => e.stopPropagation()}>Ver</Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => handleStatusSelect(a.id, 'Confirmado')}><CheckCircle2 className="w-4 h-4 mr-2"/> Confirmar</DropdownMenuItem><DropdownMenuItem onClick={() => handleStatusSelect(a.id, 'Cancelado')}><XCircle className="w-4 h-4 mr-2"/> Cancelar</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>))}</div>
+                ) : <div className="text-xs text-stone-400 text-center py-10">Nenhum pendente.</div>}
             </CardContent>
         </Card>
       </div>
@@ -270,8 +152,6 @@ export default function Dashboard() {
         onOpenChange={setIsModalOpen}
         initialData={selectedAppointment}
         onSave={async (data) => {
-            // Lógica de salvamento para o modal do Dashboard
-            // Nota: Estamos replicando a lógica de Appointments.jsx aqui para garantir consistência
             const { id, returns_to_create, ...rawData } = data;
             const payload = {
                 patient_id: rawData.patient_id, date: rawData.date, time: rawData.time, status: rawData.status,
@@ -281,7 +161,6 @@ export default function Dashboard() {
                 profit_amount: Number(rawData.profit_amount)||0, discount_percent: Number(rawData.discount_percent)||0
             };
             
-            // 1. Salvar ou Atualizar Appointment
             let appointmentId = id;
             if (id) {
                 await supabase.from('appointments').update(payload).eq('id', id);
@@ -290,7 +169,6 @@ export default function Dashboard() {
                 appointmentId = newApp.id;
             }
 
-            // 2. Sincronizar se Realizado (Mesma lógica do Appointments.jsx)
             if (payload.status === 'Realizado') {
                 await supabase.from('stock_movements').delete().eq('appointment_id', appointmentId);
                 await supabase.from('installments').delete().eq('appointment_id', appointmentId);
@@ -322,7 +200,7 @@ export default function Dashboard() {
                             const totalVal = Number(pm.value)||0; const num = Number(pm.installments)||1;
                             const valPerInst = totalVal/num;
                             for(let i=1; i<=num; i++) {
-                                const due = new Date(payload.date); due.setMonth(due.getMonth() + i);
+                                const due = new Date(payload.date); due.setMonth(due.getMonth() + (i-1));
                                 installmentsPayload.push({
                                     appointment_id: appointmentId, patient_name: rawData.patient_name_ref,
                                     installment_number: i, total_installments: num, value: valPerInst,

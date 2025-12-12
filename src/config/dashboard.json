@@ -1,0 +1,53 @@
+{
+  "title": "Remarketing de Pacientes",
+  "charts": [
+    {
+      "id": "card_potencial_remarketing",
+      "type": "card",
+      "title": "Base para Remarketing",
+      "description": "Pacientes elegíveis (Inativos > 90 dias).",
+      "icon": "people-carry",
+      "color": "primary",
+      "query": "SELECT COUNT(DISTINCT patient_id) as count FROM appointments WHERE status = 'finished' AND date < (CURRENT_DATE - INTERVAL '90 days')",
+      "width": 3
+    },
+    {
+      "id": "card_recuperados_mes",
+      "type": "card",
+      "title": "Recuperados no Mês",
+      "description": "Pacientes antigos que agendaram novamente.",
+      "icon": "check-double",
+      "color": "success",
+      "query": "SELECT COUNT(DISTINCT patient_id) as count FROM appointments WHERE status = 'scheduled' AND created_at >= date_trunc('month', CURRENT_DATE)",
+      "width": 3
+    },
+    {
+      "id": "card_meta_progresso",
+      "type": "progress",
+      "title": "Meta de Recuperação",
+      "description": "Progresso mensal.",
+      "color": "warning",
+      "query": "...",
+      "width": 3
+    },
+    {
+      "id": "card_agendamentos_hoje",
+      "type": "card",
+      "title": "Atendimentos Hoje",
+      "description": "Total na agenda hoje.",
+      "icon": "calendar",
+      "color": "info",
+      "query": "SELECT COUNT(*) as count FROM appointments WHERE date = CURRENT_DATE",
+      "format": "number",
+      "width": 3
+    },
+    {
+      "id": "table_fila_remarketing",
+      "type": "table",
+      "title": "Fila de Remarketing",
+      "description": "Lista de pacientes para contato imediato.",
+      "query": "SELECT p.name, p.phone, a.date as last_interaction FROM patients p JOIN appointments a ON p.id = a.patient_id WHERE a.status = 'finished' AND a.date < (CURRENT_DATE - INTERVAL '90 days') ORDER BY a.date ASC LIMIT 20",
+      "width": 12
+    }
+  ]
+}

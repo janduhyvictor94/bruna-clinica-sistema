@@ -1,58 +1,48 @@
-import React from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
-import Layout from "./Layout.jsx";
+import { Routes, Route, Navigate } from "react-router-dom";
+import Layout from "./Layout";
 
+// Importação das Páginas
 import Dashboard from "./Dashboard";
 import Patients from "./Patients";
 import Appointments from "./Appointments";
 import Schedule from "./Schedule";
-import Financial from "./Financial";
-import Settings from "./Settings";
-import Goals from "./Goals";
-import Reports from "./Reports";
 import Stock from "./Stock";
+import Financial from "./Financial";
+import Reports from "./Reports";
+import Goals from "./Goals";
+import Settings from "./Settings";
+import Remarketing from "./Remarketing"; // Nova tela
 
-const PAGES = {
-    Dashboard,
-    Patients,
-    Appointments,
-    Schedule,
-    Financial,
-    Settings,
-    Goals,
-    Reports,
-    Stock,
-}
+const Pages = () => {
+  return (
+    <Routes>
+      {/* O Layout envolve todas as rotas internas */}
+      <Route path="/" element={<Layout />}>
+        
+        {/* 1. Se acessar a raiz "/", abre o Dashboard */}
+        <Route index element={<Dashboard />} />
+        
+        {/* 2. CORREÇÃO DO ERRO: Se acessar "/dashboard", TAMBÉM abre o Dashboard */}
+        <Route path="dashboard" element={<Dashboard />} />
 
-function _getCurrentPage(url) {
-    if (!url) return 'Dashboard';
-    let path = url.split('?')[0]; // Remove query params
-    if (path.endsWith('/')) path = path.slice(0, -1);
-    const pageName = path.split('/').pop();
-    
-    // Verifica se a página existe no mapa, senão retorna Dashboard
-    const found = Object.keys(PAGES).find(p => p.toLowerCase() === pageName?.toLowerCase());
-    return found || 'Dashboard';
-}
+        {/* Outras rotas */}
+        <Route path="patients" element={<Patients />} />
+        <Route path="appointments" element={<Appointments />} />
+        <Route path="schedule" element={<Schedule />} />
+        <Route path="stock" element={<Stock />} />
+        <Route path="financial" element={<Financial />} />
+        <Route path="reports" element={<Reports />} />
+        <Route path="goals" element={<Goals />} />
+        <Route path="settings" element={<Settings />} />
+        
+        {/* Nova Rota de Remarketing */}
+        <Route path="remarketing" element={<Remarketing />} />
+      </Route>
 
-export default function Pages() {
-    const location = useLocation();
-    const currentPage = _getCurrentPage(location.pathname);
-    
-    return (
-        <Layout currentPageName={currentPage}>
-            <Routes>            
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/patients" element={<Patients />} />
-                <Route path="/appointments" element={<Appointments />} />
-                <Route path="/schedule" element={<Schedule />} />
-                <Route path="/financial" element={<Financial />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="/goals" element={<Goals />} />
-                <Route path="/reports" element={<Reports />} />
-                <Route path="/stock" element={<Stock />} />
-            </Routes>
-        </Layout>
-    );
-}
+      {/* Rota de segurança: Qualquer endereço desconhecido volta para o login ou dashboard */}
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+};
+
+export default Pages;
