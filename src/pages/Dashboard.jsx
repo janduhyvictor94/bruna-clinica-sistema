@@ -8,7 +8,7 @@ import StatCard from '@/components/ui/StatCard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Cake, Calendar, AlertTriangle, Clock, CheckCircle2, XCircle, RotateCcw, DollarSign, TrendingUp, TrendingDown, Syringe } from 'lucide-react';
+import { Cake, Calendar, AlertTriangle, CheckCircle2, XCircle, DollarSign, TrendingUp, TrendingDown, Syringe } from 'lucide-react';
 import { format } from 'date-fns';
 import { AppointmentModal } from './Appointments';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -19,11 +19,13 @@ export default function Dashboard() {
   const [selectedAppointment, setSelectedAppointment] = useState(null);
   const queryClient = useQueryClient();
 
+  // --- Buscas de Dados ---
   const { data: appointments = [] } = useQuery({ queryKey: ['appointments_list'], queryFn: async () => { const { data } = await supabase.from('appointments').select('*, patients(*)'); return data || []; } });
   const { data: patients = [] } = useQuery({ queryKey: ['patients'], queryFn: async () => { const { data } = await supabase.from('patients').select('*'); return data || []; } });
   const { data: expenses = [] } = useQuery({ queryKey: ['expenses'], queryFn: async () => { const { data } = await supabase.from('expenses').select('*'); return data || []; } });
   const { data: installments = [] } = useQuery({ queryKey: ['installments'], queryFn: async () => { const { data } = await supabase.from('installments').select('*'); return data || []; } });
 
+  // --- Mutações ---
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status }) => { const { error } = await supabase.from('appointments').update({ status }).eq('id', id); if (error) throw error; },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['appointments_list'] }); toast.success('Status atualizado!'); },
@@ -31,8 +33,11 @@ export default function Dashboard() {
   });
 
   const handleStatusSelect = (id, newStatus) => { updateStatusMutation.mutate({ id, status: newStatus }); };
+  
+  // Função para abrir modal de EDIÇÃO
   const handleOpenAppointment = (appt) => { setSelectedAppointment(appt); setIsModalOpen(true); };
 
+  // --- Cálculos do Dashboard ---
   const stats = useMemo(() => {
     const today = startOfDay(new Date()); 
     const next7Days = endOfDay(addDays(today, 7));
@@ -60,6 +65,7 @@ export default function Dashboard() {
     const confirmedList = appointments.filter(a => { const d = parseISO(a.date); return a.status === 'Confirmado' && isWithinInterval(d, { start: today, end: next7Days }); }).sort((a, b) => new Date(a.date) - new Date(b.date));
     const returnWarnings = appointments.filter(a => { const d = parseISO(a.date); return a.status === 'Agendado' && isWithinInterval(d, { start: today, end: next15Days }); }).sort((a, b) => new Date(a.date) - new Date(b.date));
 
+    // Lógica de Recuperação (CRM)
     const recoveryList = [];
     const processedRecovery = new Set();
     const sortedAppts = [...appointments].sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -94,7 +100,6 @@ export default function Dashboard() {
       <PageHeader title="Dashboard" subtitle={`Visão geral de ${format(new Date(), 'MMMM', { locale: ptBR })}`} />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* CORREÇÃO AQUI TAMBÉM */}
         <StatCard title="Faturamento (Mês)" value={<span className="text-lg sm:text-xl font-bold tracking-tight">R$ {stats.totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={DollarSign} />
         <StatCard title="Despesas (Mês)" value={<span className="text-lg sm:text-xl font-bold tracking-tight">R$ {stats.totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingDown} />
         <StatCard title="Líquido (Mês)" value={<span className="text-lg sm:text-xl font-bold tracking-tight">R$ {stats.profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingUp} className={stats.profit >= 0 ? 'border-emerald-200 bg-emerald-50 dark:bg-emerald-900/20' : 'border-rose-200 bg-rose-50 dark:bg-rose-900/20'} />
@@ -102,6 +107,8 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+        
+        {/* CRM / Recuperação */}
         <Card className="border-stone-200 shadow-sm h-[500px] flex flex-col bg-white">
             <CardHeader className="pb-2 p-4 bg-purple-50/50 dark:bg-purple-900/20 border-b border-purple-100 dark:border-purple-900/30">
                 <div className="flex justify-between items-center"><CardTitle className="text-sm font-bold text-purple-700 dark:text-purple-300 flex items-center gap-2"><Syringe className="w-4 h-4" /> Retorno (CRM)</CardTitle><Badge className="bg-purple-500 text-white">{stats.recoveryList.length}</Badge></div>
@@ -113,6 +120,7 @@ export default function Dashboard() {
             </CardContent>
         </Card>
 
+        {/* Aniversariantes */}
         <Card className="border-stone-200 shadow-sm h-[500px] flex flex-col bg-white">
             <CardHeader className="pb-2 p-4 bg-pink-50/50 dark:bg-pink-900/20 border-b border-pink-100 dark:border-pink-900/30">
                 <CardTitle className="text-sm font-bold text-pink-700 dark:text-pink-300 flex items-center gap-2"><Cake className="w-4 h-4" /> Aniversariantes (Hoje)</CardTitle>
@@ -124,6 +132,7 @@ export default function Dashboard() {
             </CardContent>
         </Card>
 
+        {/* Confirmados */}
         <Card className="border-stone-200 shadow-sm h-[500px] flex flex-col bg-white">
             <CardHeader className="pb-2 p-4 bg-emerald-50/50 dark:bg-emerald-900/20 border-b border-emerald-100 dark:border-emerald-900/30">
                 <div className="flex justify-between items-center"><CardTitle className="text-sm font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-2"><Calendar className="w-4 h-4" /> Confirmados (7d)</CardTitle><Badge className="bg-emerald-500 text-white">{stats.confirmedList.length}</Badge></div>
@@ -135,6 +144,7 @@ export default function Dashboard() {
             </CardContent>
         </Card>
 
+        {/* Agendados (Avisos) */}
         <Card className="border-stone-200 shadow-sm h-[500px] flex flex-col bg-white">
             <CardHeader className="pb-2 p-4 bg-amber-50/50 dark:bg-amber-900/20 border-b border-amber-100 dark:border-amber-900/30">
                 <div className="flex justify-between items-center"><CardTitle className="text-sm font-bold text-amber-700 dark:text-amber-300 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Agendados (15d)</CardTitle><Badge className="bg-amber-500 text-white">{stats.returnWarnings.length}</Badge></div>
@@ -151,6 +161,33 @@ export default function Dashboard() {
         open={isModalOpen} 
         onOpenChange={setIsModalOpen}
         initialData={selectedAppointment}
+        
+        // Função de Excluir: Apaga o agendamento e limpa o paciente
+        onDelete={async (id) => {
+            // 1. Busca dados do agendamento para saber quem é o paciente
+            const { data: appt } = await supabase.from('appointments').select('patient_id').eq('id', id).single();
+            
+            // 2. Exclui o agendamento e dependências
+            await supabase.from('stock_movements').delete().eq('appointment_id', id);
+            await supabase.from('installments').delete().eq('appointment_id', id);
+            await supabase.from('appointments').delete().eq('id', id);
+
+            // 3. ATUALIZA O PACIENTE: Limpa a data de retorno (deixa NULL)
+            if (appt && appt.patient_id) {
+                await supabase.from('patients').update({ 
+                    next_return_date: null 
+                }).eq('id', appt.patient_id);
+            }
+
+            // 4. Atualiza a tela
+            queryClient.invalidateQueries({ queryKey: ['appointments_list'] });
+            queryClient.invalidateQueries({ queryKey: ['patients'] });
+            queryClient.invalidateQueries({ queryKey: ['expenses'] });
+            queryClient.invalidateQueries({ queryKey: ['installments'] });
+            setIsModalOpen(false);
+            toast.success('Agendamento excluído e retorno limpo!');
+        }}
+
         onSave={async (data) => {
             const { id, returns_to_create, ...rawData } = data;
             const payload = {
@@ -162,11 +199,30 @@ export default function Dashboard() {
             };
             
             let appointmentId = id;
+            
             if (id) {
                 await supabase.from('appointments').update(payload).eq('id', id);
             } else {
                 const { data: newApp } = await supabase.from('appointments').insert([payload]).select().single();
                 appointmentId = newApp.id;
+            }
+
+            if (payload.patient_id && payload.date) {
+                await supabase.from('patients').update({
+                    next_return_date: payload.date,
+                    is_active: true
+                }).eq('id', payload.patient_id);
+            }
+
+            if (returns_to_create && returns_to_create.length > 0) {
+                const returnsPayload = returns_to_create.map(ret => ({
+                    patient_id: payload.patient_id,
+                    date: ret.date,
+                    notes: `Retorno Automático: ${ret.note || ''}`,
+                    status: 'Agendado',
+                    type: 'Recorrente'
+                }));
+                await supabase.from('appointments').insert(returnsPayload);
             }
 
             if (payload.status === 'Realizado') {
@@ -214,6 +270,7 @@ export default function Dashboard() {
             }
 
             queryClient.invalidateQueries({ queryKey: ['appointments_list'] });
+            queryClient.invalidateQueries({ queryKey: ['patients'] }); 
             queryClient.invalidateQueries({ queryKey: ['expenses'] });
             queryClient.invalidateQueries({ queryKey: ['installments'] });
             setIsModalOpen(false);
