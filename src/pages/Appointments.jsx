@@ -9,7 +9,7 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Plus, Calendar, User, FileText, ChevronDown, ChevronUp, History, CreditCard, X, Trash2 } from 'lucide-react';
+import { Search, Plus, Calendar, User, FileText, ChevronDown, ChevronUp, History, CreditCard, X, Trash2, Syringe, Package } from 'lucide-react';
 import { toast } from 'sonner';
 import { format, parseISO, addMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -21,12 +21,12 @@ const STATUS_OPTIONS = ['Agendado', 'Confirmado', 'Realizado', 'Cancelado'];
 const TYPE_OPTIONS = ['Novo', 'Recorrente'];
 
 const PAYMENT_METHOD_OPTIONS = [
-  'Dinheiro', 'Pix', 'Débito PJ', 'Débito PF', 
+  'Dinheiro', 'Pix PF', 'Pix PJ', 'Débito PJ', 'Débito PF', 
   'Cartão de Crédito PJ', 'Cartão de Crédito PF', 
   'Parceria', 'Troca em Procedimento'
 ];
 
-const DISCOUNT_ALLOWED_METHODS = ['Dinheiro', 'Pix', 'Débito PJ', 'Débito PF'];
+const DISCOUNT_ALLOWED_METHODS = ['Dinheiro', 'Pix PF', 'Pix PJ', 'Débito PJ', 'Débito PF'];
 const INSTALLMENT_ALLOWED_METHODS = ['Cartão de Crédito PJ', 'Cartão de Crédito PF'];
 
 export default function Appointments() {
@@ -114,7 +114,6 @@ export default function Appointments() {
                         const currentStock = Number(dbMat.stock_quantity) || 0;
                         const newStock = currentStock - qty;
                         await supabase.from('materials').update({ stock_quantity: newStock }).eq('id', dbMat.id);
-                        
                         movementsPayload.push({
                             material_id: dbMat.id,
                             appointment_id: appointmentId,
@@ -181,7 +180,6 @@ export default function Appointments() {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });     
       queryClient.invalidateQueries({ queryKey: ['installments'] }); 
       queryClient.invalidateQueries({ queryKey: ['stock-movements'] });
-      // ATUALIZA O HISTÓRICO LATERAL
       queryClient.invalidateQueries({ queryKey: ['patient_history_sidebar'] });
       setIsModalOpen(false);
       setEditingAppointment(null);
@@ -198,7 +196,6 @@ export default function Appointments() {
     },
     onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: ['appointments_list'] });
-        queryClient.invalidateQueries({ queryKey: ['patient_history_sidebar'] });
         setDeleteId(null);
         setIsModalOpen(false);
         toast.success('Excluído!');
@@ -257,16 +254,11 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
     const [newReturnDate, setNewReturnDate] = useState('');
     const [newReturnNote, setNewReturnNote] = useState('');
 
-    // --- CORREÇÃO: Usar useQuery para o Histórico Lateral para atualizar em tempo real ---
     const { data: patientHistory = [] } = useQuery({
         queryKey: ['patient_history_sidebar', formData.patient_id],
         queryFn: async () => {
             if (!formData.patient_id) return [];
-            const { data } = await supabase.from('appointments')
-                .select('*')
-                .eq('patient_id', formData.patient_id)
-                .order('date', { ascending: false })
-                .limit(5);
+            const { data } = await supabase.from('appointments').select('*').eq('patient_id', formData.patient_id).order('date', { ascending: false }).limit(5);
             return data || [];
         },
         enabled: !!formData.patient_id
@@ -298,6 +290,31 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
             setNewReturnNote('');
         }
     }, [initialData, open]);
+
+    // --- FUNÇÕES DE FORMATAÇÃO DE MOEDA (NOVO) ---
+    
+    // Converte float para string formatada (Ex: 100.5 -> "100,50")
+    const formatMoneyDisplay = (value) => {
+        if (value === undefined || value === null) return '';
+        return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2 }).format(value);
+    };
+
+    // Converte string digitada para float no estado (Ex: "100,50" -> 100.5)
+    // Lógica: remove tudo que não é dígito e divide por 100.
+    const handleMoneyChange = (value, setter, index, field, list) => {
+        const rawValue = value.replace(/\D/g, ""); // Remove não dígitos
+        const floatValue = Number(rawValue) / 100; // Divide por 100 para centavos
+
+        if (list) {
+            // Se for lista (procedimentos, materiais, pagamentos)
+            const newList = [...list];
+            newList[index][field] = floatValue;
+            setter(newList);
+        } else {
+            // Se for valor único (não usado aqui, mas bom ter)
+            setter(floatValue);
+        }
+    };
 
     const financials = useMemo(() => {
         const totalService = procedures.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
@@ -336,7 +353,7 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
     };
 
     const handleAddReturn = () => { if (!newReturnDate) return toast.error("Selecione data"); setReturnsList([...returnsList, { date: newReturnDate, note: newReturnNote }]); setNewReturnDate(''); setNewReturnNote(''); };
-    const handleAddPayment = () => { setPaymentMethods([...paymentMethods, { method: 'Pix', value: 0, installments: 1, discount_percent: 0 }]); };
+    const handleAddPayment = () => { setPaymentMethods([...paymentMethods, { method: 'Pix PF', value: 0, installments: 1, discount_percent: 0 }]); };
     const updatePayment = (index, field, value) => { const newMethods = [...paymentMethods]; newMethods[index][field] = value; setPaymentMethods(newMethods); };
     const removePayment = (index) => { setPaymentMethods(paymentMethods.filter((_, i) => i !== index)); };
     const handleSelectProcedure = (index, procName) => {
@@ -392,10 +409,14 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
 
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                 <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
-                                    <div className="flex justify-between"><Label className="font-bold uppercase text-xs text-stone-500">Procedimentos</Label><Button variant="ghost" size="sm" onClick={()=>setProcedures([...procedures, {name:'', value:0}])} className="text-xs text-blue-600">+ Adicionar</Button></div>
+                                    <div className="flex justify-between"><Label className="font-bold uppercase text-xs text-stone-500 flex gap-2 items-center"><Syringe className="w-3 h-3"/> Procedimentos</Label><Button variant="ghost" size="sm" onClick={()=>setProcedures([...procedures, {name:'', value:0}])} className="text-xs text-blue-600">+ Adicionar</Button></div>
+                                    <div className="grid grid-cols-5 gap-2 text-[10px] uppercase font-bold text-stone-400 mb-1 px-1">
+                                        <span className="col-span-3">Nome</span>
+                                        <span className="col-span-2">Valor (R$)</span>
+                                    </div>
                                     {procedures.map((p, i) => (
                                         <div key={i} className="flex gap-2 items-center">
-                                            <div className="flex-1">
+                                            <div className="col-span-3 flex-1">
                                                 <div className="relative">
                                                     <Select value={p.name} onValueChange={(val) => handleSelectProcedure(i, val)}>
                                                         <SelectTrigger className="h-9"><SelectValue placeholder="Selecione..."/></SelectTrigger>
@@ -407,16 +428,42 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                                     {p.name === 'Outro' && <Input className="mt-1 h-8 text-xs" placeholder="Nome" onChange={e => { const n = [...procedures]; n[i].name = e.target.value; setProcedures(n); }} />}
                                                 </div>
                                             </div>
-                                            <div className="w-24"><Input className="pl-2 h-9" type="number" placeholder="R$" value={p.value || 0} onChange={e=>{const n=[...procedures]; n[i].value=e.target.value; setProcedures(n)}}/></div>
-                                            <X className="w-4 h-4 cursor-pointer text-stone-400 hover:text-red-500" onClick={()=>setProcedures(procedures.filter((_,ix)=>ix!==i))}/>
+                                            {/* APLICAÇÃO DO INPUT FORMATADO */}
+                                            <div className="w-24">
+                                                <Input 
+                                                    className="pl-2 h-9" 
+                                                    type="text" 
+                                                    placeholder="0,00" 
+                                                    value={formatMoneyDisplay(p.value)} 
+                                                    onChange={e => handleMoneyChange(e.target.value, setProcedures, i, 'value', procedures)}
+                                                />
+                                            </div>
+                                            <Button variant="ghost" size="icon" className="h-9 w-9 text-stone-400 hover:text-red-500 hover:bg-red-50" onClick={()=>setProcedures(procedures.filter((_,ix)=>ix!==i))}><Trash2 className="w-4 h-4"/></Button>
                                         </div>
                                     ))}
                                 </div>
+
                                 <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
-                                    <div className="flex justify-between"><Label className="font-bold uppercase text-xs text-stone-500">Custos</Label></div>
-                                    {materialsList.length > 0 && <Select onValueChange={(v)=>{ const m=materialsList.find(x=>x.name===v); if(m) setMaterials([...materials, {name:m.name, cost:m.cost_per_unit||0}]) }}><SelectTrigger className="h-8 mb-2"><SelectValue placeholder="+ Selecionar Material"/></SelectTrigger><SelectContent>{materialsList.map(m=><SelectItem key={m.id} value={m.name}>{m.name}</SelectItem>)}</SelectContent></Select>}
-                                    {materials.length === 0 && <p className="text-xs text-stone-400 italic">Nenhum custo lançado.</p>}
-                                    {materials.map((m,i)=><div key={i} className="flex gap-2 mb-1"><Input value={m.name || ''} className="h-8 flex-1" readOnly/><Input value={m.cost || 0} type="number" className="h-8 w-20" onChange={e=>{const n=[...materials]; n[i].cost=e.target.value; setMaterials(n)}}/><X className="w-4 h-4 cursor-pointer mt-2 text-stone-400 hover:text-red-500" onClick={()=>setMaterials(materials.filter((_,ix)=>ix!==i))}/></div>)}
+                                    <div className="flex justify-between"><Label className="font-bold uppercase text-xs text-stone-500 flex gap-2 items-center"><Package className="w-3 h-3"/> Materiais / Custos</Label></div>
+                                    {materialsList.length > 0 && <Select onValueChange={(v)=>{ const m=materialsList.find(x=>x.name===v); if(m) setMaterials([...materials, {name:m.name, cost:m.cost_per_unit||0}]) }}><SelectTrigger className="h-9 mb-2"><SelectValue placeholder="+ Adicionar Material do Estoque"/></SelectTrigger><SelectContent>{materialsList.map(m=><SelectItem key={m.id} value={m.name}>{m.name}</SelectItem>)}</SelectContent></Select>}
+                                    <div className="grid grid-cols-5 gap-2 text-[10px] uppercase font-bold text-stone-400 mb-1 px-1 mt-3">
+                                        <span className="col-span-3">Material</span>
+                                        <span className="col-span-2">Custo Unit.</span>
+                                    </div>
+                                    {materials.length === 0 && <p className="text-xs text-stone-400 italic py-2 text-center bg-stone-50 rounded">Nenhum custo lançado.</p>}
+                                    {materials.map((m,i)=>(
+                                        <div key={i} className="flex gap-2 mb-1 items-center">
+                                            <Input value={m.name || ''} className="h-9 flex-1 bg-stone-50" readOnly/>
+                                            {/* APLICAÇÃO DO INPUT FORMATADO */}
+                                            <Input 
+                                                type="text" 
+                                                className="h-9 w-24" 
+                                                value={formatMoneyDisplay(m.cost)} 
+                                                onChange={e => handleMoneyChange(e.target.value, setMaterials, i, 'cost', materials)}
+                                            />
+                                            <Button variant="ghost" size="icon" className="h-9 w-9 text-stone-400 hover:text-red-500 hover:bg-red-50" onClick={()=>setMaterials(materials.filter((_,ix)=>ix!==i))}><Trash2 className="w-4 h-4"/></Button>
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
 
@@ -425,7 +472,17 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                 {paymentMethods.map((pm, i) => (
                                     <div key={i} className="flex flex-wrap gap-2 items-center bg-stone-50 p-2 rounded border border-stone-100">
                                         <Select value={pm.method} onValueChange={v => updatePayment(i, 'method', v)}><SelectTrigger className="w-40 h-8 text-xs"><SelectValue/></SelectTrigger><SelectContent>{PAYMENT_METHOD_OPTIONS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
-                                        <div className="relative w-28"><span className="absolute left-2 top-2 text-xs text-stone-400">R$</span><Input type="number" className="pl-6 h-8 text-xs" placeholder="Valor" value={pm.value} onChange={e => updatePayment(i, 'value', e.target.value)} /></div>
+                                        <div className="relative w-28">
+                                            <span className="absolute left-2 top-2 text-xs text-stone-400">R$</span>
+                                            {/* APLICAÇÃO DO INPUT FORMATADO */}
+                                            <Input 
+                                                type="text" 
+                                                className="pl-6 h-8 text-xs" 
+                                                placeholder="0,00" 
+                                                value={formatMoneyDisplay(pm.value)} 
+                                                onChange={e => handleMoneyChange(e.target.value, setPaymentMethods, i, 'value', paymentMethods)}
+                                            />
+                                        </div>
                                         {DISCOUNT_ALLOWED_METHODS.includes(pm.method) && (<div className="relative w-20"><Input type="number" className="h-8 text-xs pr-6" placeholder="Desc" value={pm.discount_percent || ''} onChange={e => updatePayment(i, 'discount_percent', e.target.value)} /><span className="absolute right-2 top-2 text-xs text-stone-400">%</span></div>)}
                                         {INSTALLMENT_ALLOWED_METHODS.includes(pm.method) && (<Select value={pm.installments?.toString()} onValueChange={v => updatePayment(i, 'installments', v)}><SelectTrigger className="w-16 h-8 text-xs"><SelectValue/></SelectTrigger><SelectContent>{[1,2,3,4,5,6,10,12].map(n => <SelectItem key={n} value={n.toString()}>{n}x</SelectItem>)}</SelectContent></Select>)}
                                         <Button variant="ghost" size="icon" className="h-8 w-8 text-red-400 ml-auto" onClick={() => removePayment(i)}><Trash2 className="w-4 h-4"/></Button>
@@ -441,9 +498,9 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                             </div>
 
                             <div className="grid grid-cols-3 gap-4">
-                                <div className="bg-white p-4 rounded-xl border border-stone-200 text-center"><span className="text-[10px] font-bold text-stone-400 uppercase block">Receita Real</span><span className="text-xl font-light text-stone-800">R$ {financials.totalPaidReal.toFixed(2)}</span></div>
-                                <div className="bg-white p-4 rounded-xl border border-stone-200 text-center"><span className="text-[10px] font-bold text-stone-400 uppercase block">Custo</span><span className="text-xl font-light text-red-600">- R$ {financials.totalMaterials.toFixed(2)}</span></div>
-                                <div className={`p-4 rounded-xl border text-center ${financials.profit >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}><span className={`text-[10px] font-bold uppercase block ${financials.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>Lucro</span><span className={`text-xl font-bold ${financials.profit >= 0 ? 'text-green-700' : 'text-red-700'}`}>R$ {financials.profit.toFixed(2)}</span></div>
+                                <div className="bg-white p-4 rounded-xl border border-stone-200 text-center"><span className="text-[10px] font-bold text-stone-400 uppercase block">Receita Real</span><span className="text-xl font-light text-stone-800">R$ {financials.totalPaidReal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span></div>
+                                <div className="bg-white p-4 rounded-xl border border-stone-200 text-center"><span className="text-[10px] font-bold text-stone-400 uppercase block">Custo</span><span className="text-xl font-light text-red-600">- R$ {financials.totalMaterials.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span></div>
+                                <div className={`p-4 rounded-xl border text-center ${financials.profit >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}><span className={`text-[10px] font-bold uppercase block ${financials.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>Lucro</span><span className={`text-xl font-bold ${financials.profit >= 0 ? 'text-green-700' : 'text-red-700'}`}>R$ {financials.profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span></div>
                             </div>
                         </div>
                     </ScrollArea>
