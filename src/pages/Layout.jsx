@@ -29,13 +29,13 @@ export default function Layout({ currentPageName }) {
     }
   }, [isDarkMode]);
 
-  // --- LÓGICA DO SINO DE NOTIFICAÇÃO (FILTRADO POR PARCELAMENTO PRÓPRIO) ---
+  // --- LÓGICA DO SINO DE NOTIFICAÇÃO (CORRIGIDA) ---
   useEffect(() => {
     const checkPendingPayments = async () => {
         const today = startOfDay(new Date());
         const next7Days = endOfDay(addDays(today, 7));
         
-        // Busca todas as parcelas não recebidas que vencem em breve
+        // Busca todas as parcelas não recebidas que vencem em breve (até 7 dias)
         const { data: installments } = await supabase
             .from('installments')
             .select('due_date, appointments(payment_methods_json)')
@@ -43,11 +43,10 @@ export default function Layout({ currentPageName }) {
             .lte('due_date', next7Days.toISOString());
             
         if (installments) {
-            // Filtra no JS para contar apenas 'Parcelamento Próprio'
+            // CORREÇÃO: Filtra pelo nome correto 'Agendamento de Pagamento'
             const count = installments.filter(i => {
                 const methods = i.appointments?.payment_methods_json || [];
-                // Considera pendente se for Parcelamento Próprio e estiver no prazo (ou atrasado)
-                return methods.some(m => m.method === 'Parcelamento Próprio');
+                return methods.some(m => m.method === 'Agendamento de Pagamento');
             }).length;
             
             setPendingPaymentsCount(count);

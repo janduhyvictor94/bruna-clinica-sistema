@@ -9,7 +9,7 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Plus, Calendar, User, FileText, ChevronDown, ChevronUp, History, CreditCard, X, Trash2, Syringe, Package } from 'lucide-react';
+import { Search, Plus, Calendar, User, FileText, ChevronDown, ChevronUp, History, CreditCard, X, Trash2, Syringe, Package, Stethoscope } from 'lucide-react';
 import { toast } from 'sonner';
 import { format, parseISO, addMonths, addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -155,7 +155,6 @@ export default function Appointments() {
                     const isScheduled = pm.method === 'Agendamento de Pagamento';
                     const numInstallments = Number(pm.installments) || 1;
                     
-                    // CASO 1: Agendamento de Pagamento (CRIA APENAS 1 PARCELA PENDENTE COM O VALOR TOTAL)
                     if (isScheduled) {
                         if (!pm.scheduled_date) {
                             throw new Error(`Selecione a data de vencimento para o Agendamento de Pagamento de R$ ${totalVal.toFixed(2).replace('.', ',')}.`);
@@ -166,22 +165,18 @@ export default function Appointments() {
                             patient_name: rawData.patient_name_ref || 'Paciente',
                             installment_number: 1, 
                             total_installments: numInstallments, 
-                            value: totalVal, // Valor total do pagamento agendado
-                            due_date: pm.scheduled_date, // Data de vencimento inserida no modal
-                            is_received: false, // Fica como A RECEBER (PREVISTO)
+                            value: totalVal, 
+                            due_date: pm.scheduled_date, 
+                            is_received: false, 
                             received_date: null
                         });
                     }
-                    // CASO 2: Parcelamento (Crédito, 1x ou > 1x) - Contabilização no Próximo Mês (D+30)
                     else if (isCreditCard) {
                         const valPerInst = totalVal / numInstallments;
                         const appointmentDateParsed = parseISO(payload.date);
-                        
-                        // Primeira parcela (vencimento): Mês seguinte ao atendimento (para cair no D+30)
                         const firstInstallmentDate = addMonths(appointmentDateParsed, 1);
                         
                         for (let i = 1; i <= numInstallments; i++) {
-                            // As parcelas futuras (i=2, 3...) somam mais meses a partir do primeiro vencimento
                             const dueDate = addMonths(firstInstallmentDate, i - 1); 
                             const formattedDueDate = format(dueDate, 'yyyy-MM-dd');
 
@@ -192,12 +187,11 @@ export default function Appointments() {
                                 total_installments: numInstallments,
                                 value: valPerInst,
                                 due_date: formattedDueDate,
-                                is_received: true, // Contabiliza como recebido
-                                received_date: formattedDueDate // Data de recebimento é o vencimento (competência)
+                                is_received: true, 
+                                received_date: formattedDueDate 
                             });
                         }
                     } 
-                    // Pagamentos à vista (Dinheiro, Pix, Débito) NÃO geram parcelas aqui.
                 });
             }
             
@@ -206,7 +200,6 @@ export default function Appointments() {
                 if (instError) throw instError;
             }
         } else if (id) {
-            // LIMPEZA SE O STATUS MUDAR PARA ALGO QUE NÃO É REALIZADO
             await supabase.from('stock_movements').delete().eq('appointment_id', apptId);
             await supabase.from('installments').delete().eq('appointment_id', apptId);
         }
@@ -299,6 +292,9 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
     const [returnsList, setReturnsList] = useState([]);
     const [newReturnDate, setNewReturnDate] = useState('');
     const [newReturnNote, setNewReturnNote] = useState('');
+    
+    // NOVO ESTADO: Modo Consulta
+    const [isConsultationMode, setIsConsultationMode] = useState(false);
 
     const { data: patientHistory = [] } = useQuery({
         queryKey: ['patient_history_sidebar', formData.patient_id],
@@ -324,7 +320,14 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                     service_type_custom: initialData.service_type_custom || '',
                     notes: initialData.notes || ''
                 });
-                setProcedures(Array.isArray(initialData.procedures_json) ? initialData.procedures_json : [{ name: '', value: 0 }]);
+                
+                const loadedProcedures = Array.isArray(initialData.procedures_json) ? initialData.procedures_json : [{ name: '', value: 0 }];
+                if (loadedProcedures.length === 1 && loadedProcedures[0].name === 'Consulta') {
+                    setIsConsultationMode(true);
+                } else {
+                    setIsConsultationMode(false);
+                }
+                setProcedures(loadedProcedures);
                 
                 const loadedMaterials = Array.isArray(initialData.materials_json) ? initialData.materials_json.map(m => ({...m, quantity: m.quantity || 1})) : [];
                 setMaterials(loadedMaterials);
@@ -339,11 +342,19 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                 setMaterials([]);
                 setPaymentMethods([]);
                 setReturnsList([]);
+                setIsConsultationMode(false);
             }
             setNewReturnDate('');
             setNewReturnNote('');
         }
     }, [initialData, open]);
+
+    const toggleConsultationMode = (enabled) => {
+        setIsConsultationMode(enabled);
+        if (enabled) {
+            setProcedures([{ name: 'Consulta', value: 0 }]);
+        }
+    };
 
     const formatMoneyDisplay = (value) => {
         if (value === undefined || value === null) return '';
@@ -356,18 +367,15 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
         if (list) { const newList = [...list]; newList[index][field] = floatValue; setter(newList); } else { setter(floatValue); }
     };
 
-    // LÓGICA DE RECÁLCULO CRÍTICA: Define o que é Receita Líquida Imediata (Profit)
     const financials = useMemo(() => {
         const totalService = procedures.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
         const totalMaterials = materials.reduce((acc, curr) => acc + ((Number(curr.cost) || 0) * (Number(curr.quantity) || 1)), 0);
         let totalPaidReal = 0;
         
-        // APENAS Pagamento Integral (Dinheiro/Pix/Débito) entra na Receita Imediata (totalPaidReal)
         paymentMethods.forEach(pm => {
             const isCreditCard = CREDIT_METHODS.includes(pm.method);
             const isScheduled = pm.method === 'Agendamento de Pagamento';
             
-            // Só contabiliza se for um método que NÃO é Agendado e NÃO é Cartão de Crédito
             if (!isScheduled && !isCreditCard) { 
                 const rawValue = Number(pm.value) || 0;
                 const discPercent = Number(pm.discount_percent) || 0;
@@ -399,7 +407,7 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
             payment_methods: paymentMethods,
             total_amount: financials.totalService, 
             cost_amount: financials.totalMaterials,
-            profit_amount: financials.profit, // Usa o profit calculado corrigido
+            profit_amount: financials.profit, 
             discount_percent: 0, 
             returns_to_create: returnsList
         });
@@ -411,12 +419,11 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
         const newMethods = [...paymentMethods]; 
         
         if (field === 'method' && value === 'Agendamento de Pagamento') {
-             newMethods[index]['installments'] = 1; // Força 1x, o parcelamento será na baixa
+             newMethods[index]['installments'] = 1; 
              const initialDate = format(new Date(), 'yyyy-MM-dd');
-             // Sugere 30 dias de vencimento
              newMethods[index]['scheduled_date'] = format(addMonths(parseISO(formData.date || initialDate), 1), 'yyyy-MM-dd'); 
         } else if (field === 'method' && !CREDIT_METHODS.includes(value)) {
-            newMethods[index]['installments'] = 1; // Pix/Dinheiro/Débito sempre 1x (integral)
+            newMethods[index]['installments'] = 1; 
         }
         
         newMethods[index][field] = value; 
@@ -476,9 +483,58 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
 
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                 <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
-                                    <div className="flex justify-between"><Label className="font-bold uppercase text-xs text-stone-500 flex gap-2 items-center"><Syringe className="w-3 h-3"/> Procedimentos</Label><Button variant="ghost" size="sm" onClick={()=>setProcedures([...procedures, {name:'', value:0}])} className="text-xs text-blue-600">+ Adicionar</Button></div>
+                                    <div className="flex justify-between items-center">
+                                        <Label className="font-bold uppercase text-xs text-stone-500 flex gap-2 items-center"><Syringe className="w-3 h-3"/> Procedimentos</Label>
+                                        <div className="flex gap-2">
+                                            {!isConsultationMode && <Button variant="ghost" size="sm" onClick={()=>setProcedures([...procedures, {name:'', value:0}])} className="text-xs text-blue-600">+ Adicionar</Button>}
+                                            {isConsultationMode ? (
+                                                <Button size="sm" onClick={() => toggleConsultationMode(false)} className="bg-stone-900 text-white hover:bg-stone-800 text-xs gap-1">
+                                                    <Plus className="w-3 h-3" /> Iniciar Procedimento
+                                                </Button>
+                                            ) : (
+                                                <Button size="sm" variant="outline" onClick={() => toggleConsultationMode(true)} className="text-xs gap-1 border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100">
+                                                    <Stethoscope className="w-3 h-3" /> Modo Consulta
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+                                    
                                     <div className="grid grid-cols-5 gap-2 text-[10px] uppercase font-bold text-stone-400 mb-1 px-1"><span className="col-span-3">Nome</span><span className="col-span-2">Valor (R$)</span></div>
-                                    {procedures.map((p, i) => (<div key={i} className="flex gap-2 items-center"><div className="col-span-3 flex-1"><div className="relative"><Select value={p.name} onValueChange={(val) => handleSelectProcedure(i, val)}><SelectTrigger className="h-9"><SelectValue placeholder="Selecione..."/></SelectTrigger><SelectContent>{proceduresList.map(proc => <SelectItem key={proc.id} value={proc.name}>{proc.name}</SelectItem>)}<SelectItem value="Outro">Outro (Digitar)</SelectItem></SelectContent></Select>{p.name === 'Outro' && <Input className="mt-1 h-8 text-xs" placeholder="Nome" onChange={e => { const n = [...procedures]; n[i].name = e.target.value; setProcedures(n); }} />}</div></div><div className="w-24"><Input className="pl-2 h-9" type="text" placeholder="0,00" value={formatMoneyDisplay(p.value)} onChange={e => handleMoneyChange(e.target.value, setProcedures, i, 'value', procedures)}/></div><Button variant="ghost" size="icon" className="h-9 w-9 text-stone-400 hover:text-red-500 hover:bg-red-50" onClick={()=>setProcedures(procedures.filter((_,ix)=>ix!==i))}><Trash2 className="w-4 h-4"/></Button></div>))}
+                                    
+                                    {procedures.map((p, i) => {
+                                        // Correção: Verifica se é um nome personalizado (não está na lista oficial e não está vazio)
+                                        // Se for personalizado, o Select deve forçar o valor 'Outro' para manter o Input visível.
+                                        const isCustom = p.name === 'Outro' || (p.name && p.name.trim() !== '' && !proceduresList.some(item => item.name === p.name));
+                                        
+                                        // Se for customizado, o Select mostra 'Outro'. Se não, mostra o nome real (ex: Botox).
+                                        // Se estiver vazio, mostra '' para exibir o placeholder.
+                                        const selectValue = isCustom ? 'Outro' : p.name;
+
+                                        return (
+                                        <div key={i} className="flex gap-2 items-center">
+                                            <div className="col-span-3 flex-1">
+                                                <div className="relative">
+                                                    {isConsultationMode && p.name === 'Consulta' ? (
+                                                        <Input className="h-9 bg-stone-100 font-medium" value="Consulta" disabled />
+                                                    ) : (
+                                                        <>
+                                                            <Select value={selectValue} onValueChange={(val) => handleSelectProcedure(i, val)}>
+                                                                <SelectTrigger className="h-9"><SelectValue placeholder="Selecione..."/></SelectTrigger>
+                                                                <SelectContent>{proceduresList.map(proc => <SelectItem key={proc.id} value={proc.name}>{proc.name}</SelectItem>)}<SelectItem value="Outro">Outro (Digitar)</SelectItem></SelectContent>
+                                                            </Select>
+                                                            {isCustom && <Input className="mt-1 h-8 text-xs" placeholder="Digite o nome..." value={p.name === 'Outro' ? '' : p.name} onChange={e => { const n = [...procedures]; n[i].name = e.target.value; setProcedures(n); }} />}
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div className="w-24">
+                                                <Input className="pl-2 h-9" type="text" placeholder="0,00" value={formatMoneyDisplay(p.value)} onChange={e => handleMoneyChange(e.target.value, setProcedures, i, 'value', procedures)}/>
+                                            </div>
+                                            {!isConsultationMode && (
+                                                <Button variant="ghost" size="icon" className="h-9 w-9 text-stone-400 hover:text-red-500 hover:bg-red-50" onClick={()=>setProcedures(procedures.filter((_,ix)=>ix!==i))}><Trash2 className="w-4 h-4"/></Button>
+                                            )}
+                                        </div>
+                                    )})}
                                 </div>
 
                                 <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">

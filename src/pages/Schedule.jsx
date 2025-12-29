@@ -28,14 +28,22 @@ export default function Schedule() {
       const { data, error } = await supabase
         .from('appointments')
         .select('*, patients(full_name), installments(*)')
-        .order('date', { ascending: true });
+        .order('date', { ascending: true })
+        .order('time', { ascending: true }); // Garante ordenação também por horário
       if (error) throw error;
       return data;
     },
   });
 
   const monthEvents = useMemo(() => {
-      return appointments.filter(a => a.date && isSameMonth(parseISO(a.date), currentDate));
+      return appointments
+          .filter(a => a.date && isSameMonth(parseISO(a.date), currentDate))
+          .sort((a, b) => {
+              // Ordenação explícita por DATA e depois por HORÁRIO
+              const dateA = new Date(`${a.date}T${a.time}`);
+              const dateB = new Date(`${b.date}T${b.time}`);
+              return dateA - dateB;
+          });
   }, [appointments, currentDate]);
 
   const getEventsForDay = (date) => {

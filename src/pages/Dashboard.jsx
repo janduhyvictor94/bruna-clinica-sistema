@@ -84,118 +84,95 @@ export default function Dashboard() {
     onError: (e) => toast.error("Erro: " + e.message)
   });
 
-  // --- MUTAÇÃO INTELIGENTE DE RECEBIMENTO ---
+  // --- MUTAÇÃO INTELIGENTE DE RECEBIMENTO (CORRIGIDA) ---
   const processPaymentMutation = useMutation({
     mutationFn: async ({ id, method, discountPercent, installmentsCount, originalValue, appointmentId, patientName }) => {
         
         const IS_PARCELED_PAYMENT = installmentsCount > 1;
         const IS_CREDIT_PARCELADO = CREDIT_METHODS.includes(method);
         const today = new Date();
-        
-        // 1. Calcula o valor base e a primeira parcela
-        const baseInstallmentValue = originalValue / installmentsCount;
-        const discountValue = baseInstallmentValue * (discountPercent / 100);
-        const firstInstallmentPaidValue = baseInstallmentValue - discountValue;
-        
         const apptId = Number(appointmentId);
         
-        // 2. Determina o VENCIMENTO e RECEBIMENTO da 1ª parcela
-        let firstInstallmentDueDate;
-        let firstInstallmentReceivedDate;
-        
-        // Pagamentos Parcelados (Crédito, Agendado > 1x)
-        if (IS_CREDIT_PARCELADO || IS_PARCELED_PAYMENT) {
-             // 1ª parcela vence no próximo mês
-            firstInstallmentDueDate = addMonths(today, 1); 
-            
-            // LÓGICA DE RECEBIMENTO (COMPETÊNCIA)
-            if (IS_CREDIT_PARCELADO) {
-                 // Para Cartão de Crédito, received_date é a data de vencimento (mês seguinte)
-                firstInstallmentReceivedDate = format(firstInstallmentDueDate, 'yyyy-MM-dd');
-            } else {
-                 // Pagamento Agendado Parcelado (>1x) ou 1x: Fica A RECEBER ou hoje. 
-                 // Como a baixa implica o recebimento do valor da 1a parcela,
-                 // e o objetivo é rastrear o fluxo de caixa, usamos a data de hoje.
-                 firstInstallmentReceivedDate = today.toISOString(); 
-            }
+        // CORREÇÃO: Para pagamentos à vista (Pix, Dinheiro) de agendamentos anteriores,
+        // NÃO deletamos a parcela. Apenas marcamos como recebida hoje.
+        // Isso garante que o valor apareça no fluxo de caixa (Financeiro) na data correta.
+        if (!IS_CREDIT_PARCELADO && !IS_PARCELED_PAYMENT) {
+             // Atualiza a parcela existente para "Recebida" hoje
+             await supabase.from('installments').update({
+                 is_received: true,
+                 received_date: today.toISOString(),
+                 // Opcional: Poderíamos salvar o método na tabela installments se tivéssemos a coluna, 
+                 // mas manteremos a compatibilidade com a estrutura atual.
+             }).eq('id', id);
+
         } else {
-            // INTEGRAL (1x): Vencimento e Recebimento são hoje.
-            firstInstallmentDueDate = today;
-            firstInstallmentReceivedDate = today.toISOString();
-        }
-
-        // 3. Atualiza a parcela atual (ID clicado) - É a 1ª Parcela
-        const { error: updateError } = await supabase.from('installments').update({
-            value: firstInstallmentPaidValue, 
-            is_received: true, 
-            received_date: firstInstallmentReceivedDate, // Data de recebimento (competência ou hoje)
-            installment_number: 1, 
-            total_installments: installmentsCount, 
-            due_date: format(firstInstallmentDueDate, 'yyyy-MM-dd'), // Data de vencimento (competência)
-        }).eq('id', id);
-        
-        if(updateError) throw updateError;
-
-        // 4. Cria as parcelas futuras, se houver
-        if (installmentsCount > 1) {
+            // LÓGICA DE PARCELAMENTO/CRÉDITO (Mantém na tabela installments)
             
-            const newInstallments = [];
+            // 1. Calcula o valor base e a primeira parcela
+            const baseInstallmentValue = originalValue / installmentsCount;
+            const discountValue = baseInstallmentValue * (discountPercent / 100);
+            const firstInstallmentPaidValue = baseInstallmentValue - discountValue;
             
-            // Loop começa na parcela 2 (i=2) e vai até o total de parcelas
-            for (let i = 2; i <= installmentsCount; i++) { 
+            // 2. Determina o VENCIMENTO e RECEBIMENTO da 1ª parcela
+            let firstInstallmentDueDate;
+            let firstInstallmentReceivedDate;
+            
+            if (IS_CREDIT_PARCELADO || IS_PARCELED_PAYMENT) {
+                // 1ª parcela vence no próximo mês
+                firstInstallmentDueDate = addMonths(today, 1); 
                 
-                // A parcela 'i' vence em 'i' meses a partir de HOJE (D+60, D+90, etc.)
-                const dueDate = addMonths(today, i); 
-                const formattedDate = format(dueDate, 'yyyy-MM-dd');
-                
-                // Lógica de recebimento das parcelas futuras:
-                // Apenas Cartão de Crédito é TRUE (Contabilização no mês de vencimento)
-                const isReceived = IS_CREDIT_PARCELADO; 
-                
-                newInstallments.push({
-                    appointment_id: apptId, 
-                    patient_name: patientName,
-                    installment_number: i, // Parcela 2, 3...
-                    total_installments: installmentsCount,
-                    value: baseInstallmentValue, 
-                    due_date: formattedDate,
-                    is_received: isReceived, 
-                    received_date: isReceived ? formattedDate : null 
-                });
+                if (IS_CREDIT_PARCELADO) {
+                    firstInstallmentReceivedDate = format(firstInstallmentDueDate, 'yyyy-MM-dd');
+                } else {
+                    firstInstallmentReceivedDate = today.toISOString(); 
+                }
+            } else {
+                firstInstallmentDueDate = today;
+                firstInstallmentReceivedDate = today.toISOString();
             }
-            if (newInstallments.length > 0) {
-                const { error: insertError } = await supabase.from('installments').insert(newInstallments);
-                if (insertError) throw insertError;
-            }
-        }
-        
-        // 5. CORREÇÃO CRÍTICA: Atualiza o JSON do Appointment para refletir o método final
-        if (!isNaN(apptId)) {
-            const { data: appt } = await supabase.from('appointments').select('payment_methods_json').eq('id', apptId).single();
-            if (appt && appt.payment_methods_json) {
-                
-                // Filtra para encontrar o pagamento agendado que corresponde ao valor original
-                const agendamentoIndex = appt.payment_methods_json.findIndex(pm => 
-                    pm.method === 'Agendamento de Pagamento' && (Number(pm.value) === originalValue)
-                );
-                
-                if (agendamentoIndex !== -1) {
-                    const newMethods = [...appt.payment_methods_json];
+
+            // 3. Atualiza a parcela atual (ID clicado) - É a 1ª Parcela
+            const { error: updateError } = await supabase.from('installments').update({
+                value: firstInstallmentPaidValue, 
+                is_received: true, 
+                received_date: firstInstallmentReceivedDate, 
+                installment_number: 1, 
+                total_installments: installmentsCount, 
+                due_date: format(firstInstallmentDueDate, 'yyyy-MM-dd'), 
+            }).eq('id', id);
+            
+            if(updateError) throw updateError;
+
+            // 4. Cria as parcelas futuras, se houver
+            if (installmentsCount > 1) {
+                const newInstallments = [];
+                for (let i = 2; i <= installmentsCount; i++) { 
+                    const dueDate = addMonths(today, i); 
+                    const formattedDate = format(dueDate, 'yyyy-MM-dd');
+                    const isReceived = IS_CREDIT_PARCELADO; 
                     
-                    // Substitui o método "Agendamento de Pagamento" pelo método final (Cartão/Pix Parcelado)
-                    newMethods[agendamentoIndex] = {
-                        method: method, 
-                        value: originalValue,
-                        installments: installmentsCount,
-                        // Remove o scheduled_date original e adiciona a data de baixa (hoje)
-                        scheduled_date: today.toISOString()
-                    };
-                    
-                    // Salva o JSON atualizado
-                    await supabase.from('appointments').update({ payment_methods_json: newMethods }).eq('id', apptId);
+                    newInstallments.push({
+                        appointment_id: apptId, 
+                        patient_name: patientName,
+                        installment_number: i, 
+                        total_installments: installmentsCount,
+                        value: baseInstallmentValue, 
+                        due_date: formattedDate,
+                        is_received: isReceived, 
+                        received_date: isReceived ? formattedDate : null 
+                    });
+                }
+                if (newInstallments.length > 0) {
+                    const { error: insertError } = await supabase.from('installments').insert(newInstallments);
+                    if (insertError) throw insertError;
                 }
             }
         }
+        
+        // CORREÇÃO: Removemos a atualização do JSON do atendimento ('appointments') aqui.
+        // Motivo: Se atualizarmos o JSON de "Agendamento" para "Pix", o Financeiro pode contar duplicado
+        // ou na data errada (data do atendimento vs data do pagamento).
+        // Mantendo como "Agendamento" no JSON, o Financeiro ignora o JSON e contabiliza a parcela recebida acima.
     },
     onSuccess: () => { 
         queryClient.invalidateQueries();
@@ -203,7 +180,7 @@ export default function Dashboard() {
         setReceiveMethod('');
         setReceiveDiscount(0);
         setReceiveInstallments(1);
-        toast.success('Recebimento confirmado e parcelas contabilizadas!'); 
+        toast.success('Recebimento confirmado e contabilizado!'); 
     },
     onError: (e) => toast.error("Erro ao processar: " + e.message)
   });
@@ -280,7 +257,6 @@ export default function Dashboard() {
             // Filtro para mostrar apenas Agendamento de Pagamento no aviso
             const isScheduledPayment = methods.some(m => m.method === 'Agendamento de Pagamento');
             
-            // FILTRO: Se está pendente E é Agendamento de Pagamento E vence em 30 dias
             return isPending && isScheduledPayment && isSoon; 
         })
         .sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
@@ -293,8 +269,6 @@ export default function Dashboard() {
                 const method = m.method || '';
                 // EXCLUI: Cartão de Crédito E Agendamento de Pagamento
                 const isInstallmentStarter = CREDIT_METHODS.includes(method) || method === 'Agendamento de Pagamento';
-                
-                // Inclui se NÃO for um método que gera parcelas futuras (apenas Pix, Dinheiro, Débito)
                 return !isInstallmentStarter;
             })
             .reduce((s, m) => {
@@ -308,7 +282,7 @@ export default function Dashboard() {
 
     const revenueFromInstallments = monthInstallments.reduce((sum, i) => sum + (Number(i.value) || 0), 0);
 
-    const totalRevenue = totalRevenueFromAppointments + revenueFromInstallments; // Soma das entradas à vista + Parcelas na competência
+    const totalRevenue = totalRevenueFromAppointments + revenueFromInstallments; 
 
     const fixedExpenses = monthExps.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
     const variableCosts = monthAppts.reduce((sum, a) => sum + (Number(a.cost_amount) || 0), 0);
@@ -383,7 +357,7 @@ export default function Dashboard() {
             </CardContent>
         </Card>
 
-        {/* Demais cards mantidos... */}
+        {/* CARD RETORNO CRM */}
         <Card className="border-stone-200 shadow-sm h-[400px] flex flex-col bg-white">
             <CardHeader className="pb-2 p-4 bg-purple-50/50 dark:bg-purple-900/20 border-b border-purple-100 dark:border-purple-900/30">
                 <div className="flex justify-between items-center"><CardTitle className="text-sm font-bold text-purple-700 dark:text-purple-300 flex items-center gap-2"><Syringe className="w-4 h-4" /> Retorno (CRM)</CardTitle><Badge className="bg-purple-500 text-white">{stats.recoveryList.length}</Badge></div>
@@ -395,6 +369,7 @@ export default function Dashboard() {
             </CardContent>
         </Card>
 
+        {/* CARD ANIVERSARIANTES */}
         <Card className="border-stone-200 shadow-sm h-[400px] flex flex-col bg-white">
             <CardHeader className="pb-2 p-4 bg-pink-50/50 dark:bg-pink-900/20 border-b border-pink-100 dark:border-pink-900/30">
                 <CardTitle className="text-sm font-bold text-pink-700 dark:text-pink-300 flex items-center gap-2"><Cake className="w-4 h-4" /> Aniversariantes (Hoje)</CardTitle>
@@ -411,6 +386,7 @@ export default function Dashboard() {
             </CardContent>
         </Card>
 
+        {/* CARD CONFIRMADOS */}
         <Card className="border-stone-200 shadow-sm h-[400px] flex flex-col bg-white">
             <CardHeader className="pb-2 p-4 bg-emerald-50/50 dark:bg-emerald-900/20 border-b border-emerald-100 dark:border-emerald-900/30">
                 <div className="flex justify-between items-center"><CardTitle className="text-sm font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-2"><Calendar className="w-4 h-4" /> Confirmados (30d)</CardTitle><Badge className="bg-emerald-500 text-white">{stats.confirmedList.length}</Badge></div>
@@ -422,6 +398,7 @@ export default function Dashboard() {
             </CardContent>
         </Card>
 
+        {/* CARD AGENDADOS */}
         <Card className="border-stone-200 shadow-sm h-[400px] flex flex-col bg-white">
             <CardHeader className="pb-2 p-4 bg-amber-50/50 dark:bg-amber-900/20 border-b border-amber-100 dark:border-amber-900/30">
                 <div className="flex justify-between items-center"><CardTitle className="text-sm font-bold text-amber-700 dark:text-amber-300 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Agendados (30d)</CardTitle><Badge className="bg-amber-500 text-white">{stats.returnWarnings.length}</Badge></div>
@@ -473,7 +450,6 @@ export default function Dashboard() {
                     const idToUpdate = Number(id);
                     if (isNaN(idToUpdate)) throw new Error("ID de agendamento inválido para atualização.");
 
-                    // UPDATE CRÍTICO - Usando ID numérico
                     const { error } = await supabase.from('appointments').update(payload).eq('id', idToUpdate); 
                     if (error) throw error;
                     appointmentId = idToUpdate;
