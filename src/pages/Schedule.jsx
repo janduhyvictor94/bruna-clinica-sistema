@@ -41,7 +41,6 @@ export default function Schedule() {
     queryFn: async () => {
       const { data, error } = await supabase.from('blocked_days').select('*');
       if (error) {
-          // Se a tabela não existir, não quebra a tela, apenas retorna vazio
           console.warn("Tabela blocked_days pode não existir.", error);
           return [];
       }
@@ -53,11 +52,9 @@ export default function Schedule() {
   const toggleBlockMutation = useMutation({
     mutationFn: async ({ date, isBlocked, id }) => {
         if (isBlocked) {
-            // Se já está bloqueado, removemos o bloqueio (Delete)
             const { error } = await supabase.from('blocked_days').delete().eq('id', id);
             if(error) throw error;
         } else {
-            // Se não está, criamos o bloqueio (Insert)
             const { error } = await supabase.from('blocked_days').insert([{ date: date }]);
             if(error) throw error;
         }
@@ -98,7 +95,7 @@ export default function Schedule() {
   };
 
   const handleToggleBlock = (e, day, blockedInfo) => {
-    e.stopPropagation(); // Evita abrir o modal de agendamento
+    e.stopPropagation(); 
     const dateStr = format(day, 'yyyy-MM-dd');
     toggleBlockMutation.mutate({ 
         date: dateStr, 
@@ -245,17 +242,19 @@ export default function Schedule() {
 
 
   return (
-    <div className="space-y-6 h-[calc(100vh-100px)] flex flex-col">
+    // AJUSTE 1: Container principal centralizado (mx-auto), com largura máxima (max-w-[1600px]) e altura fixa calculada
+    <div className="flex flex-col h-[calc(100vh-120px)] w-full max-w-[1600px] mx-auto space-y-4">
       <PageHeader 
         title="Agenda" 
         subtitle="Calendário mensal" 
         action={<Button onClick={() => { setEditingAppointment(null); setIsModalOpen(true); }} className="bg-stone-800"><Plus className="w-4 h-4 mr-2"/> Novo</Button>} 
       />
       
-      <div className="flex flex-col lg:flex-row gap-6 h-full">
+      {/* AJUSTE 2: min-h-0 é crucial para que o conteúdo interno tenha barra de rolagem e não a tela inteira */}
+      <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
           
           {/* BARRA LATERAL */}
-          <Card className="w-full lg:w-80 flex flex-col bg-white h-full border-stone-200 shadow-sm">
+          <Card className="w-full lg:w-80 flex flex-col bg-white h-full border-stone-200 shadow-sm shrink-0">
               <div className="p-4 border-b border-stone-100 bg-stone-50">
                   <h3 className="font-bold text-stone-700 text-sm flex items-center gap-2">
                       <CalIcon className="w-4 h-4"/> Lista de {format(currentDate, 'MMMM', {locale: ptBR})}
@@ -287,99 +286,102 @@ export default function Schedule() {
           </Card>
 
           {/* CALENDÁRIO VISUAL */}
-          <div className="flex-1 flex flex-col gap-4">
-              <div className="flex items-center justify-between bg-white p-2 px-4 rounded-xl border border-stone-200 shadow-sm">
+          <div className="flex-1 flex flex-col gap-4 min-w-0">
+              <div className="flex items-center justify-between bg-white p-2 px-4 rounded-xl border border-stone-200 shadow-sm shrink-0">
                 <Button variant="ghost" size="icon" onClick={() => setCurrentDate(subMonths(currentDate, 1))}><ChevronLeft className="w-5 h-5"/></Button>
                 <span className="text-lg font-bold text-stone-800 capitalize">{format(currentDate, 'MMMM yyyy', { locale: ptBR })}</span>
                 <Button variant="ghost" size="icon" onClick={() => setCurrentDate(addMonths(currentDate, 1))}><ChevronRight className="w-5 h-5"/></Button>
               </div>
 
               <div className="flex-1 bg-white rounded-xl border border-stone-200 overflow-hidden flex flex-col shadow-sm">
-                  <div className="grid grid-cols-7 border-b border-stone-100 bg-stone-50">
+                  {/* Cabeçalho dos Dias (FIXO) */}
+                  <div className="grid grid-cols-7 border-b border-stone-100 bg-stone-50 shrink-0">
                       {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => <div key={d} className="p-3 text-center text-xs font-bold text-stone-500 uppercase">{d}</div>)}
                   </div>
-                  <div className="grid grid-cols-7 flex-1 auto-rows-fr">
-                      {calendarDays.map((day, i) => {
-                          const dateKey = format(day, 'yyyy-MM-dd');
-                          const isCurrentMonth = isSameMonth(day, currentDate);
-                          const isToday = isSameDay(day, new Date());
-                          const dayEvents = getEventsForDay(day);
-                          
-                          // Verifica se o dia está bloqueado
-                          const blockedInfo = blockedDays.find(b => b.date === dateKey);
-                          const isBlocked = !!blockedInfo;
+                  
+                  {/* Área de Dias (ROLÁVEL) */}
+                  <div className="flex-1 overflow-y-auto">
+                    {/* AJUSTE 3: Padding no final para não colar no rodapé */}
+                    <div className="grid grid-cols-7 min-h-full auto-rows-fr pb-10">
+                        {calendarDays.map((day, i) => {
+                            const dateKey = format(day, 'yyyy-MM-dd');
+                            const isCurrentMonth = isSameMonth(day, currentDate);
+                            const isToday = isSameDay(day, new Date());
+                            const dayEvents = getEventsForDay(day);
+                            
+                            const blockedInfo = blockedDays.find(b => b.date === dateKey);
+                            const isBlocked = !!blockedInfo;
 
-                          return (
-                              <div key={i} 
-                                   className={`
-                                        min-h-[100px] border-b border-r border-stone-100 p-1 relative transition-colors 
-                                        ${!isCurrentMonth ? 'bg-stone-50/40' : 'bg-white'} 
-                                        ${isBlocked ? 'bg-stone-100 bg-[linear-gradient(45deg,transparent_25%,rgba(0,0,0,0.05)_25%,rgba(0,0,0,0.05)_50%,transparent_50%,transparent_75%,rgba(0,0,0,0.05)_75%,rgba(0,0,0,0.05)_100%)] bg-[length:10px_10px]' : 'hover:bg-stone-50'}
-                                   `}
-                                   onClick={(e) => { 
-                                      // Só abre modal se clicar no fundo E não estiver bloqueado
-                                      if(e.target === e.currentTarget && !isBlocked) {
-                                          setEditingAppointment({ date: dateKey });
-                                          setIsModalOpen(true);
-                                      }
-                                   }}>
-                                  
-                                  {/* Header do Dia */}
-                                  <div className="flex justify-between items-start mb-1">
-                                      <div className={`text-xs font-medium flex justify-center`}>
-                                          <span className={`w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-stone-900 text-white' : isCurrentMonth ? 'text-stone-700' : 'text-stone-300'}`}>
-                                              {format(day, 'd')}
-                                          </span>
-                                      </div>
-                                      
-                                      {/* Botão de Bloqueio (Visível no Hover ou se estiver bloqueado) */}
-                                      <TooltipProvider>
-                                        <Tooltip>
-                                            <TooltipTrigger asChild>
-                                                <button 
-                                                    onClick={(e) => handleToggleBlock(e, day, blockedInfo)}
-                                                    className={`
-                                                        p-1 rounded transition-all opacity-40 hover:opacity-100
-                                                        ${isBlocked ? 'text-stone-600 opacity-100' : 'text-stone-300 hover:text-red-400'}
-                                                    `}
+                            return (
+                                <div key={i} 
+                                    className={`
+                                            min-h-[120px] border-b border-r border-stone-100 p-1 relative transition-colors 
+                                            ${!isCurrentMonth ? 'bg-stone-50/40' : 'bg-white'} 
+                                            ${isBlocked ? 'bg-stone-100 bg-[linear-gradient(45deg,transparent_25%,rgba(0,0,0,0.05)_25%,rgba(0,0,0,0.05)_50%,transparent_50%,transparent_75%,rgba(0,0,0,0.05)_75%,rgba(0,0,0,0.05)_100%)] bg-[length:10px_10px]' : 'hover:bg-stone-50'}
+                                    `}
+                                    onClick={(e) => { 
+                                        if(e.target === e.currentTarget && !isBlocked) {
+                                            setEditingAppointment({ date: dateKey });
+                                            setIsModalOpen(true);
+                                        }
+                                    }}>
+                                    
+                                    {/* Header do Dia */}
+                                    <div className="flex justify-between items-start mb-1">
+                                        <div className={`text-xs font-medium flex justify-center`}>
+                                            <span className={`w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-stone-900 text-white' : isCurrentMonth ? 'text-stone-700' : 'text-stone-300'}`}>
+                                                {format(day, 'd')}
+                                            </span>
+                                        </div>
+                                        
+                                        <TooltipProvider>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <button 
+                                                        onClick={(e) => handleToggleBlock(e, day, blockedInfo)}
+                                                        className={`
+                                                            p-1 rounded transition-all opacity-40 hover:opacity-100
+                                                            ${isBlocked ? 'text-stone-600 opacity-100' : 'text-stone-300 hover:text-red-400'}
+                                                        `}
+                                                    >
+                                                        {isBlocked ? <Lock className="w-3 h-3"/> : <Unlock className="w-3 h-3"/>}
+                                                    </button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                    <p>{isBlocked ? "Desbloquear Dia" : "Bloquear Dia"}</p>
+                                                </TooltipContent>
+                                            </Tooltip>
+                                        </TooltipProvider>
+                                    </div>
+
+                                    {/* Conteúdo do Dia */}
+                                    <div className="space-y-1">
+                                        {isBlocked ? (
+                                            <div className="flex flex-col items-center justify-center h-full py-2 opacity-50 select-none">
+                                                <Ban className="w-4 h-4 text-stone-400 mb-1"/>
+                                                <span className="text-[10px] font-bold text-stone-500 uppercase tracking-widest">Fechado</span>
+                                            </div>
+                                        ) : (
+                                            dayEvents.map(ev => (
+                                                <div 
+                                                    key={ev.id}
+                                                    className={`text-[10px] px-1.5 py-1 rounded truncate shadow-sm border-l-2 cursor-pointer transition-transform active:scale-95 ${statusColor(ev.status)}`}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation(); 
+                                                        handleOpen(ev);
+                                                    }}
+                                                    title={`${ev.time} - ${ev.patients?.full_name}`}
                                                 >
-                                                    {isBlocked ? <Lock className="w-3 h-3"/> : <Unlock className="w-3 h-3"/>}
-                                                </button>
-                                            </TooltipTrigger>
-                                            <TooltipContent>
-                                                <p>{isBlocked ? "Desbloquear Dia" : "Bloquear Dia"}</p>
-                                            </TooltipContent>
-                                        </Tooltip>
-                                      </TooltipProvider>
-                                  </div>
-
-                                  {/* Conteúdo do Dia */}
-                                  <div className="space-y-1">
-                                      {isBlocked ? (
-                                          <div className="flex flex-col items-center justify-center h-full py-2 opacity-50 select-none">
-                                              <Ban className="w-4 h-4 text-stone-400 mb-1"/>
-                                              <span className="text-[10px] font-bold text-stone-500 uppercase tracking-widest">Fechado</span>
-                                          </div>
-                                      ) : (
-                                          dayEvents.map(ev => (
-                                              <div 
-                                                  key={ev.id}
-                                                  className={`text-[10px] px-1.5 py-1 rounded truncate shadow-sm border-l-2 cursor-pointer transition-transform active:scale-95 ${statusColor(ev.status)}`}
-                                                  onClick={(e) => {
-                                                      e.stopPropagation(); 
-                                                      handleOpen(ev);
-                                                  }}
-                                                  title={`${ev.time} - ${ev.patients?.full_name}`}
-                                              >
-                                                  <span className="font-bold mr-1">{ev.time}</span>
-                                                  {ev.patients?.full_name || 'S/ Nome'}
-                                              </div>
-                                          ))
-                                      )}
-                                  </div>
-                              </div>
-                          );
-                      })}
+                                                    <span className="font-bold mr-1">{ev.time}</span>
+                                                    {ev.patients?.full_name || 'S/ Nome'}
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
                   </div>
               </div>
           </div>
