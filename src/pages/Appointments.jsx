@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { supabase } from '../supabase';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '@/components/ui/PageHeader';
@@ -9,7 +9,7 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Plus, Calendar, User, FileText, ChevronDown, ChevronUp, History, CreditCard, X, Trash2, Syringe, Package, Stethoscope } from 'lucide-react';
+import { Search, Plus, Calendar, User, FileText, ChevronDown, ChevronUp, History, CreditCard, X, Trash2, Syringe, Package, Stethoscope, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { format, parseISO, addMonths, addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -136,8 +136,7 @@ export default function Appointments() {
                             total_cost: (Number(dbMat.cost_per_unit)||0) * qty,
                             reason: 'Uso em atendimento',
                             date: payload.date,
-                            material_name: dbMat.name,
-                            patient_name: rawData.patient_name_ref 
+                            material_name: rawData.patient_name_ref 
                         });
                     }
                 }
@@ -293,7 +292,9 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
     const [newReturnDate, setNewReturnDate] = useState('');
     const [newReturnNote, setNewReturnNote] = useState('');
     
-    // NOVO ESTADO: Modo Consulta
+    // STATES PARA CAMPO DE BUSCA DE PACIENTE
+    const [patientSearch, setPatientSearch] = useState('');
+    const [showPatientList, setShowPatientList] = useState(false);
     const [isConsultationMode, setIsConsultationMode] = useState(false);
 
     const { data: patientHistory = [] } = useQuery({
@@ -305,6 +306,12 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
         },
         enabled: !!formData.patient_id
     });
+
+    // Filtra pacientes conforme digita
+    const filteredPatients = useMemo(() => {
+        if (!patientSearch) return patientsList.slice(0, 10); // Mostra 10 primeiros se vazio
+        return patientsList.filter(p => p.full_name.toLowerCase().includes(patientSearch.toLowerCase()));
+    }, [patientsList, patientSearch]);
 
     useEffect(() => {
         if (open) {
@@ -336,6 +343,15 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                 setPaymentMethods(loadedMethods);
                 
                 setReturnsList([]);
+
+                // Preencher nome do paciente no input
+                if (initialData.patients) {
+                    setPatientSearch(initialData.patients.full_name);
+                } else if (initialPatientId && patientsList.length > 0) {
+                     const p = patientsList.find(x => x.id === initialPatientId);
+                     if(p) setPatientSearch(p.full_name);
+                }
+
             } else {
                 setFormData({ patient_id: '', date: format(new Date(), 'yyyy-MM-dd'), time: '', status: 'Agendado', type: 'Novo', service_type_custom: '', notes: '' });
                 setProcedures([{ name: '', value: 0 }]);
@@ -343,11 +359,13 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                 setPaymentMethods([]);
                 setReturnsList([]);
                 setIsConsultationMode(false);
+                setPatientSearch('');
             }
             setNewReturnDate('');
             setNewReturnNote('');
+            setShowPatientList(false);
         }
-    }, [initialData, open]);
+    }, [initialData, open, patientsList]); // Adicionado patientsList na dependência para carregar nome
 
     const toggleConsultationMode = (enabled) => {
         setIsConsultationMode(enabled);
@@ -441,6 +459,13 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
     const handleAddMaterial = (val) => { const m = materialsList.find(x => x.name === val); if (m) setMaterials([...materials, { name: m.name, cost: m.cost_per_unit || 0, quantity: 1 }]); };
     const safeClose = () => { if(typeof onOpenChange === 'function') onOpenChange(false); };
 
+    // Fecha a lista se clicar fora (simples)
+    const handleSelectPatient = (patient) => {
+        setFormData({...formData, patient_id: patient.id});
+        setPatientSearch(patient.full_name);
+        setShowPatientList(false);
+    };
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="max-w-6xl h-[95vh] flex flex-col p-0 gap-0 bg-stone-50 overflow-hidden">
@@ -453,15 +478,41 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                             <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
                                 <h4 className="text-xs font-bold text-stone-400 uppercase tracking-widest flex gap-2"><User className="w-4 h-4"/> Dados do Agendamento</h4>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div className="md:col-span-2">
+                                    <div className="md:col-span-2 relative">
                                         <Label>Paciente *</Label>
-                                        <Select 
-                                            value={formData.patient_id ? String(formData.patient_id) : ''} 
-                                            onValueChange={v => setFormData({...formData, patient_id: Number(v)})}
-                                        >
-                                            <SelectTrigger><SelectValue placeholder="Busque paciente..."/></SelectTrigger>
-                                            <SelectContent>{patientsList.map(p => <SelectItem key={p.id} value={String(p.id)}>{p.full_name}</SelectItem>)}</SelectContent>
-                                        </Select>
+                                        <Input 
+                                            placeholder="Digite o nome do paciente..."
+                                            value={patientSearch}
+                                            onChange={(e) => {
+                                                setPatientSearch(e.target.value);
+                                                setFormData({...formData, patient_id: ''}); // Limpa ID se alterar texto
+                                                setShowPatientList(true);
+                                            }}
+                                            onFocus={() => setShowPatientList(true)}
+                                            className="mt-1"
+                                        />
+                                        
+                                        {/* Lista Flutuante de Pacientes */}
+                                        {showPatientList && (
+                                            <>
+                                            {/* Backdrop invisível para fechar ao clicar fora */}
+                                            <div className="fixed inset-0 z-40" onClick={() => setShowPatientList(false)}></div>
+                                            <div className="absolute z-50 w-full bg-white border border-stone-200 rounded-md shadow-lg mt-1 max-h-60 overflow-y-auto">
+                                                {filteredPatients.length > 0 ? filteredPatients.map(p => (
+                                                    <div
+                                                        key={p.id}
+                                                        className="p-3 hover:bg-stone-50 cursor-pointer text-sm flex justify-between items-center border-b border-stone-50 last:border-0"
+                                                        onClick={() => handleSelectPatient(p)}
+                                                    >
+                                                        <span className="font-medium text-stone-700">{p.full_name}</span>
+                                                        {formData.patient_id === p.id && <Check className="w-4 h-4 text-emerald-600"/>}
+                                                    </div>
+                                                )) : (
+                                                    <div className="p-3 text-sm text-stone-400 text-center">Nenhum paciente encontrado.</div>
+                                                )}
+                                            </div>
+                                            </>
+                                        )}
                                     </div>
                                     <div className="grid grid-cols-2 gap-4"><div><Label>Data</Label><Input type="date" value={formData.date || ''} onChange={e => setFormData({...formData, date: e.target.value})}/></div><div><Label>Hora</Label><Input type="time" value={formData.time || ''} onChange={e => setFormData({...formData, time: e.target.value})}/></div></div>
                                     <div className="grid grid-cols-2 gap-4"><div><Label>Tipo</Label><Select value={formData.type} onValueChange={v => setFormData({...formData, type: v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{TYPE_OPTIONS.map(t=><SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent></Select></div><div><Label>Status</Label><Select value={formData.status} onValueChange={v => setFormData({...formData, status: v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{STATUS_OPTIONS.map(s=><SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div></div>
@@ -502,12 +553,8 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                     <div className="grid grid-cols-5 gap-2 text-[10px] uppercase font-bold text-stone-400 mb-1 px-1"><span className="col-span-3">Nome</span><span className="col-span-2">Valor (R$)</span></div>
                                     
                                     {procedures.map((p, i) => {
-                                        // Correção: Verifica se é um nome personalizado (não está na lista oficial e não está vazio)
-                                        // Se for personalizado, o Select deve forçar o valor 'Outro' para manter o Input visível.
+                                        // Se for customizado, o Select mostra 'Outro'. Se não, mostra o nome real.
                                         const isCustom = p.name === 'Outro' || (p.name && p.name.trim() !== '' && !proceduresList.some(item => item.name === p.name));
-                                        
-                                        // Se for customizado, o Select mostra 'Outro'. Se não, mostra o nome real (ex: Botox).
-                                        // Se estiver vazio, mostra '' para exibir o placeholder.
                                         const selectValue = isCustom ? 'Outro' : p.name;
 
                                         return (

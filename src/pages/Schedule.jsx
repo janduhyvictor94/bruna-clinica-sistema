@@ -3,16 +3,15 @@ import { supabase } from '../supabase';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ChevronLeft, ChevronRight, Plus, Clock, Calendar as CalIcon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Calendar as CalIcon, Lock, Unlock, Ban } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, isSameMonth, isSameDay, addMonths, subMonths, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Link } from 'react-router-dom';
 import { AppointmentModal } from './Appointments';
 import { toast } from 'sonner';
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 const CREDIT_METHODS = ['Cartão de Crédito PJ', 'Cartão de Crédito PF'];
 
@@ -22,6 +21,7 @@ export default function Schedule() {
   const [editingAppointment, setEditingAppointment] = useState(null);
   const queryClient = useQueryClient();
 
+  // --- QUERY: AGENDAMENTOS ---
   const { data: appointments = [] } = useQuery({
     queryKey: ['appointments'],
     queryFn: async () => {
@@ -29,17 +29,50 @@ export default function Schedule() {
         .from('appointments')
         .select('*, patients(full_name), installments(*)')
         .order('date', { ascending: true })
-        .order('time', { ascending: true }); // Garante ordenação também por horário
+        .order('time', { ascending: true });
       if (error) throw error;
       return data;
     },
+  });
+
+  // --- QUERY: DIAS BLOQUEADOS ---
+  const { data: blockedDays = [] } = useQuery({
+    queryKey: ['blocked_days'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('blocked_days').select('*');
+      if (error) {
+          // Se a tabela não existir, não quebra a tela, apenas retorna vazio
+          console.warn("Tabela blocked_days pode não existir.", error);
+          return [];
+      }
+      return data;
+    },
+  });
+
+  // --- MUTAÇÃO: BLOQUEAR/DESBLOQUEAR ---
+  const toggleBlockMutation = useMutation({
+    mutationFn: async ({ date, isBlocked, id }) => {
+        if (isBlocked) {
+            // Se já está bloqueado, removemos o bloqueio (Delete)
+            const { error } = await supabase.from('blocked_days').delete().eq('id', id);
+            if(error) throw error;
+        } else {
+            // Se não está, criamos o bloqueio (Insert)
+            const { error } = await supabase.from('blocked_days').insert([{ date: date }]);
+            if(error) throw error;
+        }
+    },
+    onSuccess: (_, variables) => {
+        queryClient.invalidateQueries({ queryKey: ['blocked_days'] });
+        toast.success(variables.isBlocked ? 'Dia desbloqueado' : 'Dia bloqueado para atendimentos');
+    },
+    onError: (e) => toast.error('Erro ao alterar bloqueio: ' + e.message)
   });
 
   const monthEvents = useMemo(() => {
       return appointments
           .filter(a => a.date && isSameMonth(parseISO(a.date), currentDate))
           .sort((a, b) => {
-              // Ordenação explícita por DATA e depois por HORÁRIO
               const dateA = new Date(`${a.date}T${a.time}`);
               const dateB = new Date(`${b.date}T${b.time}`);
               return dateA - dateB;
@@ -64,11 +97,21 @@ export default function Schedule() {
       setIsModalOpen(true);
   };
 
+  const handleToggleBlock = (e, day, blockedInfo) => {
+    e.stopPropagation(); // Evita abrir o modal de agendamento
+    const dateStr = format(day, 'yyyy-MM-dd');
+    toggleBlockMutation.mutate({ 
+        date: dateStr, 
+        isBlocked: !!blockedInfo, 
+        id: blockedInfo?.id 
+    });
+  };
+
   const statusColor = (s) => {
       if(s==='Confirmado') return 'bg-emerald-600 hover:bg-emerald-700 border-emerald-600 text-white';
       if(s==='Cancelado') return 'bg-rose-500 hover:bg-rose-600 border-rose-500 text-white';
       if(s==='Realizado') return 'bg-stone-500 hover:bg-stone-600 border-stone-500 text-white';
-      return 'bg-blue-500 hover:bg-blue-600 border-blue-500 text-white'; // Agendado
+      return 'bg-blue-500 hover:bg-blue-600 border-blue-500 text-white'; 
   };
 
   const handleDeleteAppointment = async (id) => {
@@ -88,13 +131,11 @@ export default function Schedule() {
     try {
         const { id, returns_to_create, custom_installments, ...rawData } = data;
         
-        // RECÁLCULO DO PROFIT (APENAS PIX/DINHEIRO/DEB)
         let totalPaidReal = 0;
         rawData.payment_methods.forEach(pm => {
             const isCreditCard = CREDIT_METHODS.includes(pm.method);
             const isScheduled = pm.method === 'Agendamento de Pagamento';
             
-            // APENAS Pagamento Integral (Dinheiro/Pix/Débito) entra na Receita Imediata
             if (!isScheduled && !isCreditCard) { 
                 const rawValue = Number(pm.value) || 0;
                 const discPercent = Number(pm.discount_percent) || 0;
@@ -105,7 +146,6 @@ export default function Schedule() {
 
         const totalMaterials = rawData.materials_json.reduce((acc, curr) => acc + ((Number(curr.cost) || 0) * (Number(curr.quantity) || 1)), 0);
         const profit = totalPaidReal - totalMaterials;
-        // FIM RECÁLCULO
         
         const payload = {
             patient_id: rawData.patient_id, date: rawData.date, time: rawData.time, status: rawData.status,
@@ -114,15 +154,14 @@ export default function Schedule() {
             procedures_json: rawData.procedures_json, materials_json: rawData.materials_json,
             total_amount: Number(rawData.total_amount)||0, 
             cost_amount: Number(rawData.cost_amount)||0,
-            profit_amount: profit, // Usando o profit corrigido
+            profit_amount: profit,
             discount_percent: Number(rawData.discount_percent)||0
         };
 
         let appointmentId;
         if (id) {
             const idToUpdate = Number(id);
-            if (isNaN(idToUpdate)) throw new Error("ID de agendamento inválido para atualização.");
-
+            if (isNaN(idToUpdate)) throw new Error("ID inválido.");
             const { error } = await supabase.from('appointments').update(payload).eq('id', idToUpdate); 
             if (error) throw error;
             appointmentId = idToUpdate;
@@ -158,9 +197,8 @@ export default function Schedule() {
             }
 
             const installmentsPayload = [];
-            // Lógica de Parcelas
             if (custom_installments && custom_installments.length > 0) {
-                // Lógica de parcelamento manual (mantida)
+                // Lógica manual
             } else if (rawData.payment_methods?.length > 0) {
                 rawData.payment_methods.forEach(pm => {
                     const totalVal = Number(pm.value)||0; 
@@ -168,52 +206,33 @@ export default function Schedule() {
                     const isScheduled = pm.method === 'Agendamento de Pagamento';
                     const numInstallments = Number(pm.installments)||1;
                     
-                    // CASO 1: Agendamento de Pagamento (CRIA APENAS 1 PARCELA PENDENTE COM O VALOR TOTAL)
                     if (isScheduled) {
-                        if (!pm.scheduled_date) {
-                             throw new Error(`Selecione a data de vencimento para o Agendamento de Pagamento de R$ ${totalVal.toFixed(2).replace('.', ',')}.`);
-                        }
-                        
+                        if (!pm.scheduled_date) throw new Error(`Data de vencimento obrigatória.`);
                         installmentsPayload.push({
                             appointment_id: apptId, patient_name: rawData.patient_name_ref,
-                            installment_number: 1, 
-                            total_installments: numInstallments, 
-                            value: totalVal, 
-                            due_date: pm.scheduled_date, // Data de vencimento inserida no modal
-                            is_received: false, 
-                            received_date: null
+                            installment_number: 1, total_installments: numInstallments, value: totalVal, 
+                            due_date: pm.scheduled_date, is_received: false, received_date: null
                         });
                     }
-                    // CASO 2: Parcelamento (Crédito, 1x ou > 1x)
                     else if (isCreditCard) {
                         const valPerInst = totalVal / numInstallments;
                         const appointmentDateParsed = parseISO(payload.date);
-                        
-                        // Primeira parcela (vencimento): Mês seguinte
                         const firstInstallmentDate = addMonths(appointmentDateParsed, 1);
                         
                         for (let i = 1; i <= numInstallments; i++) {
                             const dueDate = addMonths(firstInstallmentDate, i - 1); 
                             const formattedDueDate = format(dueDate, 'yyyy-MM-dd');
-                            
                             installmentsPayload.push({
                                 appointment_id: apptId, patient_name: rawData.patient_name_ref,
                                 installment_number: i, total_installments: numInstallments, value: valPerInst,
-                                due_date: formattedDueDate,
-                                is_received: true, 
-                                received_date: formattedDueDate,
+                                due_date: formattedDueDate, is_received: true, received_date: formattedDueDate,
                             });
                         }
                     } 
-                    // Pagamentos à vista (Dinheiro/Pix/Débito) NÃO geram parcelas aqui (evita duplicação)
                 });
             }
-            if (installmentsPayload.length) {
-                const { error: instError } = await supabase.from('installments').insert(installmentsPayload);
-                if (instError) throw instError;
-            }
+            if (installmentsPayload.length) await supabase.from('installments').insert(installmentsPayload);
         } else if (id) {
-            // *** LIMPEZA SE O STATUS MUDAR PARA ALGO QUE NÃO É REALIZADO ***
             await supabase.from('stock_movements').delete().eq('appointment_id', apptId);
             await supabase.from('installments').delete().eq('appointment_id', apptId);
         }
@@ -221,10 +240,7 @@ export default function Schedule() {
         queryClient.invalidateQueries();
         setIsModalOpen(false);
         toast.success('Salvo!');
-    } catch (error) {
-        console.error(error);
-        toast.error('Erro ao salvar: ' + error.message);
-    }
+    } catch (error) { toast.error('Erro ao salvar: ' + error.message); }
   };
 
 
@@ -284,38 +300,82 @@ export default function Schedule() {
                   </div>
                   <div className="grid grid-cols-7 flex-1 auto-rows-fr">
                       {calendarDays.map((day, i) => {
+                          const dateKey = format(day, 'yyyy-MM-dd');
                           const isCurrentMonth = isSameMonth(day, currentDate);
                           const isToday = isSameDay(day, new Date());
                           const dayEvents = getEventsForDay(day);
+                          
+                          // Verifica se o dia está bloqueado
+                          const blockedInfo = blockedDays.find(b => b.date === dateKey);
+                          const isBlocked = !!blockedInfo;
+
                           return (
                               <div key={i} 
-                                   className={`min-h-[100px] border-b border-r border-stone-100 p-1 relative transition-colors ${!isCurrentMonth ? 'bg-stone-50/40' : 'bg-white'} hover:bg-stone-50 cursor-pointer`} 
+                                   className={`
+                                        min-h-[100px] border-b border-r border-stone-100 p-1 relative transition-colors 
+                                        ${!isCurrentMonth ? 'bg-stone-50/40' : 'bg-white'} 
+                                        ${isBlocked ? 'bg-stone-100 bg-[linear-gradient(45deg,transparent_25%,rgba(0,0,0,0.05)_25%,rgba(0,0,0,0.05)_50%,transparent_50%,transparent_75%,rgba(0,0,0,0.05)_75%,rgba(0,0,0,0.05)_100%)] bg-[length:10px_10px]' : 'hover:bg-stone-50'}
+                                   `}
                                    onClick={(e) => { 
-                                      if(e.target === e.currentTarget) {
-                                          setEditingAppointment({ date: format(day, 'yyyy-MM-dd') });
+                                      // Só abre modal se clicar no fundo E não estiver bloqueado
+                                      if(e.target === e.currentTarget && !isBlocked) {
+                                          setEditingAppointment({ date: dateKey });
                                           setIsModalOpen(true);
                                       }
                                    }}>
-                                  <div className={`text-xs font-medium mb-1 flex justify-center`}>
-                                      <span className={`w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-stone-900 text-white' : isCurrentMonth ? 'text-stone-700' : 'text-stone-300'}`}>
-                                          {format(day, 'd')}
-                                      </span>
+                                  
+                                  {/* Header do Dia */}
+                                  <div className="flex justify-between items-start mb-1">
+                                      <div className={`text-xs font-medium flex justify-center`}>
+                                          <span className={`w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-stone-900 text-white' : isCurrentMonth ? 'text-stone-700' : 'text-stone-300'}`}>
+                                              {format(day, 'd')}
+                                          </span>
+                                      </div>
+                                      
+                                      {/* Botão de Bloqueio (Visível no Hover ou se estiver bloqueado) */}
+                                      <TooltipProvider>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <button 
+                                                    onClick={(e) => handleToggleBlock(e, day, blockedInfo)}
+                                                    className={`
+                                                        p-1 rounded transition-all opacity-40 hover:opacity-100
+                                                        ${isBlocked ? 'text-stone-600 opacity-100' : 'text-stone-300 hover:text-red-400'}
+                                                    `}
+                                                >
+                                                    {isBlocked ? <Lock className="w-3 h-3"/> : <Unlock className="w-3 h-3"/>}
+                                                </button>
+                                            </TooltipTrigger>
+                                            <TooltipContent>
+                                                <p>{isBlocked ? "Desbloquear Dia" : "Bloquear Dia"}</p>
+                                            </TooltipContent>
+                                        </Tooltip>
+                                      </TooltipProvider>
                                   </div>
+
+                                  {/* Conteúdo do Dia */}
                                   <div className="space-y-1">
-                                      {dayEvents.map(ev => (
-                                          <div 
-                                              key={ev.id}
-                                              className={`text-[10px] px-1.5 py-1 rounded truncate shadow-sm border-l-2 cursor-pointer transition-transform active:scale-95 ${statusColor(ev.status)}`}
-                                              onClick={(e) => {
-                                                  e.stopPropagation(); 
-                                                  handleOpen(ev);
-                                              }}
-                                              title={`${ev.time} - ${ev.patients?.full_name}`}
-                                          >
-                                              <span className="font-bold mr-1">{ev.time}</span>
-                                              {ev.patients?.full_name || 'S/ Nome'}
+                                      {isBlocked ? (
+                                          <div className="flex flex-col items-center justify-center h-full py-2 opacity-50 select-none">
+                                              <Ban className="w-4 h-4 text-stone-400 mb-1"/>
+                                              <span className="text-[10px] font-bold text-stone-500 uppercase tracking-widest">Fechado</span>
                                           </div>
-                                      ))}
+                                      ) : (
+                                          dayEvents.map(ev => (
+                                              <div 
+                                                  key={ev.id}
+                                                  className={`text-[10px] px-1.5 py-1 rounded truncate shadow-sm border-l-2 cursor-pointer transition-transform active:scale-95 ${statusColor(ev.status)}`}
+                                                  onClick={(e) => {
+                                                      e.stopPropagation(); 
+                                                      handleOpen(ev);
+                                                  }}
+                                                  title={`${ev.time} - ${ev.patients?.full_name}`}
+                                              >
+                                                  <span className="font-bold mr-1">{ev.time}</span>
+                                                  {ev.patients?.full_name || 'S/ Nome'}
+                                              </div>
+                                          ))
+                                      )}
                                   </div>
                               </div>
                           );
