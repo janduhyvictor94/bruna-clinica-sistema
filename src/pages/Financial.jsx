@@ -23,8 +23,8 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 
 const EXPENSE_CATEGORIES = ['Aluguel', 'Energia', 'Água', 'Internet', 'Telefone', 'Materiais', 'Equipamentos', 'Marketing', 'Funcionários', 'Impostos', 'Outros'];
 const CREDIT_METHODS = ['Cartão de Crédito PJ', 'Cartão de Crédito PF'];
-const COLORS = ['#c4a47c', '#78716c', '#d6d3d1', '#a8a29e', '#57534e', '#44403c']; // Paleta Stone (Receitas)
-const EXPENSE_COLORS = ['#ef4444', '#f87171', '#fca5a5', '#fecaca', '#fee2e2', '#7f1d1d']; // Paleta Avermelhada (Despesas)
+const COLORS = ['#c4a47c', '#78716c', '#d6d3d1', '#a8a29e', '#57534e', '#44403c']; 
+const EXPENSE_COLORS = ['#ef4444', '#f87171', '#fca5a5', '#fecaca', '#fee2e2', '#7f1d1d']; 
 
 export default function Financial() {
   const [activeTab, setActiveTab] = useState('overview');
@@ -72,7 +72,7 @@ export default function Financial() {
   const handlePrevMonth = () => { if (selectedMonth === 0) { setSelectedMonth(11); setSelectedYear(selectedYear - 1); } else { setSelectedMonth(selectedMonth - 1); } };
   const handleNextMonth = () => { if (selectedMonth === 11) { setSelectedMonth(0); setSelectedYear(selectedYear + 1); } else { setSelectedMonth(selectedMonth + 1); } };
 
-  // --- CÁLCULOS GERAIS ---
+  // --- CÁLCULOS ---
 
   const receivedInstallments = useMemo(() => {
     return allInstallments.filter(i => {
@@ -124,9 +124,6 @@ export default function Financial() {
     { name: 'Custos Mat.', value: totalMaterialCost }
   ].filter(item => item.value > 0);
 
-  // --- ESTATÍSTICAS PARA RELATÓRIOS ---
-
-  // 1. Relatório de Pagamentos (Receitas)
   const paymentStats = useMemo(() => {
     const stats = {};
     const periodAppointments = appointments.filter(a => a.status === 'Realizado' && isDateInSelectedPeriod(a.date));
@@ -154,10 +151,8 @@ export default function Financial() {
 
   const paymentPieData = paymentStats.map(stat => ({ name: stat.name, value: stat.total }));
 
-  // 2. Relatório de Despesas (NOVA FUNCIONALIDADE)
   const expenseStats = useMemo(() => {
       const stats = {};
-      // Filtra despesas PAGAS no período
       const periodExpenses = expenses.filter(e => e.is_paid && isDateInSelectedPeriod(e.due_date));
       
       periodExpenses.forEach(e => {
@@ -281,170 +276,181 @@ export default function Financial() {
     : 'bg-rose-50 border-rose-200 dark:bg-rose-950 dark:border-rose-800 text-rose-900 dark:text-rose-100';
 
   return (
-    <div className="space-y-6">
-      <PageHeader title="Financeiro" subtitle="Fluxo de caixa (Regime de Caixa)" action={<Button onClick={() => setIsExpenseModalOpen(true)} className="bg-stone-900"><Plus className="w-4 h-4 mr-2"/> Nova Despesa</Button>}/>
-      <div className="flex flex-col sm:flex-row gap-4 p-4 bg-white rounded-xl border border-stone-200 shadow-sm items-center justify-between">
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-            <Select value={filterType} onValueChange={setFilterType}>
-                <SelectTrigger className="w-full sm:w-32"><SelectValue/></SelectTrigger>
-                <SelectContent><SelectItem value="month">Mês</SelectItem><SelectItem value="year">Ano</SelectItem></SelectContent>
-            </Select>
-        </div>
-        {filterType === 'month' && (
-            <div className="flex items-center gap-2 bg-stone-50 p-1 rounded-lg border border-stone-200 dark:bg-stone-800 dark:border-stone-700">
-                <Button variant="ghost" size="icon" onClick={handlePrevMonth} className="h-8 w-8 hover:bg-white dark:hover:bg-stone-700"><ChevronLeft className="w-4 h-4"/></Button>
-                <div className="flex gap-2">
-                    <Select value={selectedMonth.toString()} onValueChange={v=>setSelectedMonth(parseInt(v))}><SelectTrigger className="w-32 h-8 border-none bg-transparent shadow-none focus:ring-0 font-medium"><SelectValue/></SelectTrigger><SelectContent>{months.map((m,i)=><SelectItem key={i} value={i.toString()}>{m}</SelectItem>)}</SelectContent></Select>
-                    <Select value={selectedYear.toString()} onValueChange={v=>setSelectedYear(parseInt(v))}><SelectTrigger className="w-20 h-8 border-none bg-transparent shadow-none focus:ring-0 font-medium"><SelectValue/></SelectTrigger><SelectContent>{years.map(y=><SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent></Select>
-                </div>
-                <Button variant="ghost" size="icon" onClick={handleNextMonth} className="h-8 w-8 hover:bg-white dark:hover:bg-stone-700"><ChevronRight className="w-4 h-4"/></Button>
-            </div>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Entradas (Caixa)" value={<span className="text-xl font-bold tracking-tight">R$ {totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={DollarSign} />
-        <StatCard title="A Receber (Previsto)" value={<span className="text-xl font-bold tracking-tight">R$ {pendingInstallmentsValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={CreditCard} />
-        <StatCard title="Despesas (Pagas)" value={<span className="text-xl font-bold tracking-tight">R$ {totalExpensesPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingDown} />
-        <StatCard title="Custo Mat." value={<span className="text-xl font-bold tracking-tight">R$ {totalMaterialCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingDown} />
-        <StatCard title="Líquido (Caixa)" value={<span className="text-xl font-bold tracking-tight">R$ {profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingUp} className={liquidCardClass} />
-      </div>
-
-      <Tabs defaultValue="overview" value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="bg-stone-100 w-full sm:w-auto grid grid-cols-4 sm:flex">
-            <TabsTrigger value="overview">Visão Geral</TabsTrigger>
-            <TabsTrigger value="installments">Recebidos</TabsTrigger>
-            <TabsTrigger value="expenses">Despesas</TabsTrigger>
-            <TabsTrigger value="payments">Relatórios</TabsTrigger>
-        </TabsList>
-        <TabsContent value="overview" className="mt-6">
-          <Card>
-            <CardHeader><CardTitle>Entradas x Saídas (Período)</CardTitle></CardHeader>
-            <CardContent className="h-80">
-              {pieChartData.length > 0 ? (
-                <ResponsiveContainer>
-                  <PieChart>
-                    <Pie data={pieChartData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} dataKey="value" label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}>
-                      {pieChartData.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}
-                    </Pie>
-                    <Tooltip formatter={(value) => `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : <div className="flex items-center justify-center h-full text-stone-400">Sem dados neste período</div>}
-            </CardContent>
-          </Card>
-        </TabsContent>
-        <TabsContent value="installments" className="mt-6 space-y-4">
-            <div className="flex items-center space-x-2 p-3 bg-stone-50 rounded-lg border border-stone-100">
-                <Checkbox id="only-installments" checked={onlyInstallments} onCheckedChange={setOnlyInstallments}/>
-                <label htmlFor="only-installments" className="text-sm font-medium leading-none cursor-pointer text-stone-700 flex items-center gap-1"><Filter className="w-4 h-4 text-stone-500"/> Mostrar apenas parcelas &gt; 1x</label>
-            </div>
-            {allReceivedItems.length === 0 && <p className="text-center text-stone-400 py-10">Nenhum recebimento.</p>}
-            {allReceivedItems.map(i=>(
-                <Card key={i.id}>
-                    <CardContent className="p-4 flex justify-between items-center">
-                        <div className="flex gap-4 items-center">
-                            {i.type === 'PARCELA' && (<button onClick={()=>updateInstallmentMutation.mutate(i)} className="transition-transform active:scale-95"><CheckCircle2 className={`w-6 h-6 text-emerald-600 fill-emerald-50`}/></button>)}
-                            {i.type === 'À VISTA' && (<CalendarIcon className="w-6 h-6 text-stone-400"/>)}
-                            <div><h3 className="font-bold text-stone-800 dark:text-stone-200">{i.patient_name}</h3><div className="flex items-center gap-2 text-xs text-stone-500"><span className={`px-2 py-0.5 rounded text-[10px] ${i.type === 'À VISTA' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>{i.description}</span><span>Data: {i.date ? format(new Date(i.date), 'dd/MM/yyyy') : 'N/A'}</span></div></div>
-                        </div>
-                        <span className="font-bold text-stone-700 dark:text-stone-300">R$ {Number(i.value).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                    </CardContent>
-                </Card>
-            ))}
-        </TabsContent>
-        <TabsContent value="expenses" className="mt-6 space-y-4">
-            {expensesList.length === 0 && <p className="text-center text-stone-400 py-10">Nenhuma despesa encontrada neste período.</p>}
-            {expensesList.map(e=>(
-                <ExpenseCard key={e.id} expense={e} onEdit={()=>setEditingExpense(e)} onDelete={()=>setDeleteExpense(e)} onTogglePaid={()=>togglePaid(e)}/>
-            ))}
-        </TabsContent>
+    <div className="h-[calc(100vh-100px)] overflow-y-auto w-full p-2 pb-40 px-4 md:px-8">
+      <div className="max-w-[1600px] mx-auto space-y-6">
+        <PageHeader title="Financeiro" subtitle="Fluxo de caixa (Regime de Caixa)" action={<Button onClick={() => setIsExpenseModalOpen(true)} className="bg-stone-900"><Plus className="w-4 h-4 mr-2"/> Nova Despesa</Button>}/>
         
-        {/* --- ABA RELATÓRIOS (ATUALIZADA) --- */}
-        <TabsContent value="payments" className="mt-6 space-y-10">
-            {/* 1. SEÇÃO DE ENTRADAS (Original) */}
-            <div className="space-y-4">
-                <div className="flex items-center gap-2 text-emerald-700 border-b border-emerald-100 pb-2">
-                    <ArrowUpCircle className="w-5 h-5"/>
-                    <h3 className="font-bold text-lg">Entradas por Método</h3>
-                </div>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <Card>
-                        <CardHeader><CardTitle>Gráfico de Entradas</CardTitle></CardHeader>
-                        <CardContent className="h-64">
-                            {paymentPieData.length > 0 ? (
-                                <ResponsiveContainer>
-                                    <PieChart>
-                                        <Pie data={paymentPieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}>
-                                            {paymentPieData.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}
-                                        </Pie>
-                                        <Tooltip formatter={(value) => `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
-                                    </PieChart>
-                                </ResponsiveContainer>
-                            ) : <div className="flex items-center justify-center h-full text-stone-400">Sem dados</div>}
-                        </CardContent>
-                    </Card>
-                    <Card>
-                        <CardHeader><CardTitle>Detalhamento de Entradas</CardTitle></CardHeader>
-                        <CardContent>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-sm text-left">
-                                    <thead className="text-xs text-stone-500 uppercase bg-stone-50"><tr><th className="px-4 py-2">Método</th><th className="px-4 py-2 text-center">Qtd</th><th className="px-4 py-2 text-right">Total</th></tr></thead>
-                                    <tbody>{paymentStats.map((stat, index) => (<tr key={index} className="border-b border-stone-100 hover:bg-stone-50"><td className="px-4 py-3 font-medium">{stat.name}</td><td className="px-4 py-3 text-center">{stat.count}</td><td className="px-4 py-3 text-right">R$ {stat.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td></tr>))}</tbody>
-                                </table>
-                            </div>
-                        </CardContent>
-                    </Card>
-                </div>
-            </div>
+        <div className="flex flex-col sm:flex-row gap-4 p-4 bg-white rounded-xl border border-stone-200 shadow-sm items-center justify-between">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+              <Select value={filterType} onValueChange={setFilterType}>
+                  <SelectTrigger className="w-full sm:w-32"><SelectValue/></SelectTrigger>
+                  <SelectContent><SelectItem value="month">Mês</SelectItem><SelectItem value="year">Ano</SelectItem></SelectContent>
+              </Select>
+          </div>
+          {filterType === 'month' && (
+              <div className="flex items-center gap-2 bg-stone-50 p-1 rounded-lg border border-stone-200 dark:bg-stone-800 dark:border-stone-700">
+                  <Button variant="ghost" size="icon" onClick={handlePrevMonth} className="h-8 w-8 hover:bg-white dark:hover:bg-stone-700"><ChevronLeft className="w-4 h-4"/></Button>
+                  <div className="flex gap-2">
+                      <Select value={selectedMonth.toString()} onValueChange={v=>setSelectedMonth(parseInt(v))}><SelectTrigger className="w-32 h-8 border-none bg-transparent shadow-none focus:ring-0 font-medium"><SelectValue/></SelectTrigger><SelectContent>{months.map((m,i)=><SelectItem key={i} value={i.toString()}>{m}</SelectItem>)}</SelectContent></Select>
+                      <Select value={selectedYear.toString()} onValueChange={v=>setSelectedYear(parseInt(v))}><SelectTrigger className="w-20 h-8 border-none bg-transparent shadow-none focus:ring-0 font-medium"><SelectValue/></SelectTrigger><SelectContent>{years.map(y=><SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent></Select>
+                  </div>
+                  <Button variant="ghost" size="icon" onClick={handleNextMonth} className="h-8 w-8 hover:bg-white dark:hover:bg-stone-700"><ChevronRight className="w-4 h-4"/></Button>
+              </div>
+          )}
+        </div>
 
-            {/* 2. SEÇÃO DE SAÍDAS (Nova - Despesas) */}
-            <div className="space-y-4">
-                <div className="flex items-center gap-2 text-rose-700 border-b border-rose-100 pb-2">
-                    <ArrowDownCircle className="w-5 h-5"/>
-                    <h3 className="font-bold text-lg">Saídas por Categoria</h3>
-                </div>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <Card>
-                        <CardHeader><CardTitle>Gráfico de Despesas (Pagas)</CardTitle></CardHeader>
-                        <CardContent className="h-64">
-                            {expensePieData.length > 0 ? (
-                                <ResponsiveContainer>
-                                    <PieChart>
-                                        <Pie data={expensePieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}>
-                                            {expensePieData.map((entry, index) => (<Cell key={`cell-exp-${index}`} fill={EXPENSE_COLORS[index % EXPENSE_COLORS.length]} />))}
-                                        </Pie>
-                                        <Tooltip formatter={(value) => `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
-                                    </PieChart>
-                                </ResponsiveContainer>
-                            ) : <div className="flex items-center justify-center h-full text-stone-400">Sem despesas pagas</div>}
-                        </CardContent>
-                    </Card>
-                    <Card>
-                        <CardHeader><CardTitle>Detalhamento de Despesas</CardTitle></CardHeader>
-                        <CardContent>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-sm text-left">
-                                    <thead className="text-xs text-stone-500 uppercase bg-stone-50"><tr><th className="px-4 py-2">Categoria</th><th className="px-4 py-2 text-center">Qtd</th><th className="px-4 py-2 text-right">Total Pago</th></tr></thead>
-                                    <tbody>{expenseStats.map((stat, index) => (<tr key={index} className="border-b border-stone-100 hover:bg-stone-50"><td className="px-4 py-3 font-medium">{stat.name}</td><td className="px-4 py-3 text-center">{stat.count}</td><td className="px-4 py-3 text-right">R$ {stat.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td></tr>))}</tbody>
-                                </table>
-                            </div>
-                        </CardContent>
-                    </Card>
-                </div>
-            </div>
-        </TabsContent>
-      </Tabs>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+          <StatCard title="Entradas (Caixa)" value={<span className="text-xl font-bold tracking-tight">R$ {totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={DollarSign} />
+          <StatCard title="A Receber (Previsto)" value={<span className="text-xl font-bold tracking-tight">R$ {pendingInstallmentsValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={CreditCard} />
+          <StatCard title="Despesas (Pagas)" value={<span className="text-xl font-bold tracking-tight">R$ {totalExpensesPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingDown} />
+          <StatCard title="Custo Mat." value={<span className="text-xl font-bold tracking-tight">R$ {totalMaterialCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingDown} />
+          <StatCard title="Líquido (Caixa)" value={<span className="text-xl font-bold tracking-tight">R$ {profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingUp} className={liquidCardClass} />
+        </div>
 
-      <ExpenseModal 
-        open={isExpenseModalOpen||!!editingExpense} 
-        onClose={()=>{setIsExpenseModalOpen(false);setEditingExpense(null)}} 
-        expense={editingExpense} 
-        onSave={d=>{editingExpense?updateMutation.mutate({id:editingExpense.id,data:d}):createMutation.mutate(d)}}
-        isSaving={createMutation.isPending || updateMutation.isPending}
-      />
-      <AlertDialog open={!!deleteExpense} onOpenChange={()=>setDeleteExpense(null)}><AlertDialogContent><AlertDialogTitle>Excluir?</AlertDialogTitle><AlertDialogFooter><AlertDialogCancel>Não</AlertDialogCancel><AlertDialogAction onClick={()=>deleteMutation.mutate(deleteExpense.id)}>Sim</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+        <Tabs defaultValue="overview" value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="bg-stone-100 w-full sm:w-auto flex flex-wrap h-auto justify-start p-1 gap-1">
+              <TabsTrigger value="overview" className="flex-1 sm:flex-none min-w-[100px]">Visão Geral</TabsTrigger>
+              <TabsTrigger value="installments" className="flex-1 sm:flex-none min-w-[100px]">Recebidos</TabsTrigger>
+              <TabsTrigger value="expenses" className="flex-1 sm:flex-none min-w-[100px]">Despesas</TabsTrigger>
+              <TabsTrigger value="payments" className="flex-1 sm:flex-none min-w-[100px]">Relatórios</TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="overview" className="mt-6">
+            <Card>
+              <CardHeader><CardTitle>Entradas x Saídas (Período)</CardTitle></CardHeader>
+              <CardContent className="h-80 min-w-0">
+                {pieChartData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={pieChartData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} dataKey="value" label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}>
+                        {pieChartData.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}
+                      </Pie>
+                      <Tooltip formatter={(value) => `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : <div className="flex items-center justify-center h-full text-stone-400">Sem dados neste período</div>}
+              </CardContent>
+            </Card>
+          </TabsContent>
+          <TabsContent value="installments" className="mt-6 space-y-4">
+              <div className="flex items-center space-x-2 p-3 bg-stone-50 rounded-lg border border-stone-100">
+                  <Checkbox id="only-installments" checked={onlyInstallments} onCheckedChange={setOnlyInstallments}/>
+                  <label htmlFor="only-installments" className="text-sm font-medium leading-none cursor-pointer text-stone-700 flex items-center gap-1"><Filter className="w-4 h-4 text-stone-500"/> Mostrar apenas parcelas &gt; 1x</label>
+              </div>
+              {allReceivedItems.length === 0 && <p className="text-center text-stone-400 py-10">Nenhum recebimento.</p>}
+              <div className="grid grid-cols-1 gap-4">
+                  {allReceivedItems.map(i=>(
+                      <Card key={i.id}>
+                          <CardContent className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                              <div className="flex gap-4 items-center min-w-0 flex-1">
+                                  {i.type === 'PARCELA' && (<button onClick={()=>updateInstallmentMutation.mutate(i)} className="transition-transform active:scale-95 flex-shrink-0"><CheckCircle2 className={`w-6 h-6 text-emerald-600 fill-emerald-50`}/></button>)}
+                                  {i.type === 'À VISTA' && (<CalendarIcon className="w-6 h-6 text-stone-400 flex-shrink-0"/>)}
+                                  <div className="min-w-0">
+                                      <h3 className="font-bold text-stone-800 dark:text-stone-200 truncate">{i.patient_name}</h3>
+                                      <div className="flex items-center gap-2 text-xs text-stone-500 flex-wrap">
+                                          <span className={`px-2 py-0.5 rounded text-[10px] ${i.type === 'À VISTA' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'}`}>{i.description}</span>
+                                          <span className="whitespace-nowrap">Data: {i.date ? format(new Date(i.date), 'dd/MM/yyyy') : 'N/A'}</span>
+                                      </div>
+                                  </div>
+                              </div>
+                              <span className="font-bold text-stone-700 dark:text-stone-300 whitespace-nowrap">R$ {Number(i.value).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          </CardContent>
+                      </Card>
+                  ))}
+              </div>
+          </TabsContent>
+          <TabsContent value="expenses" className="mt-6 space-y-4">
+              {expensesList.length === 0 && <p className="text-center text-stone-400 py-10">Nenhuma despesa encontrada neste período.</p>}
+              <div className="grid grid-cols-1 gap-4">
+                  {expensesList.map(e=>(
+                      <ExpenseCard key={e.id} expense={e} onEdit={()=>setEditingExpense(e)} onDelete={()=>setDeleteExpense(e)} onTogglePaid={()=>togglePaid(e)}/>
+                  ))}
+              </div>
+          </TabsContent>
+          
+          <TabsContent value="payments" className="mt-6 space-y-10">
+              <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-emerald-700 border-b border-emerald-100 pb-2">
+                      <ArrowUpCircle className="w-5 h-5"/>
+                      <h3 className="font-bold text-lg">Entradas por Método</h3>
+                  </div>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      <Card>
+                          <CardHeader><CardTitle>Gráfico de Entradas</CardTitle></CardHeader>
+                          <CardContent className="h-64 min-w-0">
+                              {paymentPieData.length > 0 ? (
+                                  <ResponsiveContainer width="100%" height="100%">
+                                      <PieChart>
+                                          <Pie data={paymentPieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}>
+                                              {paymentPieData.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}
+                                          </Pie>
+                                          <Tooltip formatter={(value) => `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
+                                      </PieChart>
+                                  </ResponsiveContainer>
+                              ) : <div className="flex items-center justify-center h-full text-stone-400">Sem dados</div>}
+                          </CardContent>
+                      </Card>
+                      <Card>
+                          <CardHeader><CardTitle>Detalhamento de Entradas</CardTitle></CardHeader>
+                          <CardContent>
+                              <div className="overflow-x-auto">
+                                  <table className="w-full text-sm text-left min-w-[300px]">
+                                      <thead className="text-xs text-stone-500 uppercase bg-stone-50"><tr><th className="px-4 py-2">Método</th><th className="px-4 py-2 text-center">Qtd</th><th className="px-4 py-2 text-right">Total</th></tr></thead>
+                                      <tbody>{paymentStats.map((stat, index) => (<tr key={index} className="border-b border-stone-100 hover:bg-stone-50"><td className="px-4 py-3 font-medium truncate max-w-[150px]">{stat.name}</td><td className="px-4 py-3 text-center">{stat.count}</td><td className="px-4 py-3 text-right">R$ {stat.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td></tr>))}</tbody>
+                                  </table>
+                              </div>
+                          </CardContent>
+                      </Card>
+                  </div>
+              </div>
+
+              <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-rose-700 border-b border-rose-100 pb-2">
+                      <ArrowDownCircle className="w-5 h-5"/>
+                      <h3 className="font-bold text-lg">Saídas por Categoria</h3>
+                  </div>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      <Card>
+                          <CardHeader><CardTitle>Gráfico de Despesas (Pagas)</CardTitle></CardHeader>
+                          <CardContent className="h-64 min-w-0">
+                              {expensePieData.length > 0 ? (
+                                  <ResponsiveContainer width="100%" height="100%">
+                                      <PieChart>
+                                          <Pie data={expensePieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}>
+                                              {expensePieData.map((entry, index) => (<Cell key={`cell-exp-${index}`} fill={EXPENSE_COLORS[index % EXPENSE_COLORS.length]} />))}
+                                          </Pie>
+                                          <Tooltip formatter={(value) => `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
+                                      </PieChart>
+                                  </ResponsiveContainer>
+                              ) : <div className="flex items-center justify-center h-full text-stone-400">Sem despesas pagas</div>}
+                          </CardContent>
+                      </Card>
+                      <Card>
+                          <CardHeader><CardTitle>Detalhamento de Despesas</CardTitle></CardHeader>
+                          <CardContent>
+                              <div className="overflow-x-auto">
+                                  <table className="w-full text-sm text-left min-w-[300px]">
+                                      <thead className="text-xs text-stone-500 uppercase bg-stone-50"><tr><th className="px-4 py-2">Categoria</th><th className="px-4 py-2 text-center">Qtd</th><th className="px-4 py-2 text-right">Total Pago</th></tr></thead>
+                                      <tbody>{expenseStats.map((stat, index) => (<tr key={index} className="border-b border-stone-100 hover:bg-stone-50"><td className="px-4 py-3 font-medium truncate max-w-[150px]">{stat.name}</td><td className="px-4 py-3 text-center">{stat.count}</td><td className="px-4 py-3 text-right">R$ {stat.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td></tr>))}</tbody>
+                                  </table>
+                              </div>
+                          </CardContent>
+                      </Card>
+                  </div>
+              </div>
+          </TabsContent>
+        </Tabs>
+
+        <ExpenseModal 
+          open={isExpenseModalOpen||!!editingExpense} 
+          onClose={()=>{setIsExpenseModalOpen(false);setEditingExpense(null)}} 
+          expense={editingExpense} 
+          onSave={d=>{editingExpense?updateMutation.mutate({id:editingExpense.id,data:d}):createMutation.mutate(d)}}
+          isSaving={createMutation.isPending || updateMutation.isPending}
+        />
+        <AlertDialog open={!!deleteExpense} onOpenChange={()=>setDeleteExpense(null)}><AlertDialogContent><AlertDialogTitle>Excluir?</AlertDialogTitle><AlertDialogFooter><AlertDialogCancel>Não</AlertDialogCancel><AlertDialogAction onClick={()=>deleteMutation.mutate(deleteExpense.id)}>Sim</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      </div>
     </div>
   );
 }
@@ -458,23 +464,23 @@ function ExpenseCard({ expense, onEdit, onDelete, onTogglePaid }) {
 
     return (
         <Card className={`bg-white border-stone-100 hover:shadow-sm transition-shadow ${isOverdue ? 'border-l-4 border-l-rose-400' : isPaid ? 'border-l-4 border-l-stone-400' : 'border-l-4 border-l-amber-400'}`}>
-            <CardContent className="p-4 flex justify-between items-center">
-                <div className="flex gap-4 items-center">
-                    <button onClick={onTogglePaid} title={isPaid ? "Desmarcar" : "Pagar"}>
+            <CardContent className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div className="flex gap-4 items-center flex-1 min-w-0">
+                    <button onClick={onTogglePaid} title={isPaid ? "Desmarcar" : "Pagar"} className="flex-shrink-0">
                         <CheckCircle2 className={`w-6 h-6 ${isPaid?'text-emerald-600 fill-emerald-50':'text-stone-300 hover:text-emerald-400'}`}/>
                     </button>
-                    <div>
-                        <h3 className="font-bold text-stone-800 dark:text-stone-200">{expense.description}</h3>
-                        <div className="flex items-center gap-2 text-xs text-stone-500">
+                    <div className="min-w-0">
+                        <h3 className="font-bold text-stone-800 dark:text-stone-200 truncate">{expense.description}</h3>
+                        <div className="flex items-center gap-2 text-xs text-stone-500 flex-wrap">
                             <Badge variant="outline" className="text-[10px]">{expense.category}</Badge>
-                            <span className={isOverdue ? 'text-rose-600 font-bold' : 'text-stone-500'}>
+                            <span className={isOverdue ? 'text-rose-600 font-bold whitespace-nowrap' : 'text-stone-500 whitespace-nowrap'}>
                                 {isPaid ? 'Pago' : `Venc: ${displayDate}`}
                             </span>
                         </div>
                     </div>
                 </div>
-                <div className="flex gap-4 items-center">
-                    <span className={`font-bold ${isPaid ? 'text-stone-700' : 'text-stone-400'} dark:text-stone-300`}>R$ {Number(expense.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                <div className="flex gap-4 items-center w-full sm:w-auto justify-between sm:justify-end">
+                    <span className={`font-bold ${isPaid ? 'text-stone-700' : 'text-stone-400'} dark:text-stone-300 whitespace-nowrap`}>R$ {Number(expense.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                     <div className="flex gap-2"><Button size="sm" variant="outline" onClick={onEdit}><Edit2 className="w-4 h-4"/></Button><Button size="sm" variant="outline" onClick={onDelete}><Trash2 className="w-4 h-4"/></Button></div>
                 </div>
             </CardContent>
@@ -507,27 +513,36 @@ function ExpenseModal({ open, onClose, expense, onSave, isSaving }) {
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-        <DialogContent>
-            <DialogHeader>
+        <DialogContent className="max-w-lg max-h-[85vh] flex flex-col p-0">
+            <DialogHeader className="p-6 pb-2">
                 <DialogTitle>{expense ? 'Editar Despesa' : 'Nova Despesa'}</DialogTitle>
                 <DialogDescription>Preencha os dados da despesa abaixo.</DialogDescription>
             </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
-                <div><Label>Descrição *</Label><Input placeholder="Descrição" value={form.description} onChange={e=>setForm({...form,description:e.target.value})} required/></div>
-                <div className="grid grid-cols-2 gap-4">
-                    <div><Label>Categoria *</Label><Select value={form.category} onValueChange={v=>setForm({...form,category:v})} required><SelectTrigger><SelectValue placeholder="Categoria"/></SelectTrigger><SelectContent>{EXPENSE_CATEGORIES.map(c=><SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></div>
-                    <div><Label>Valor *</Label><Input type="number" step="0.01" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})} required/></div>
-                </div>
-                <div><Label>Vencimento *</Label><Input type="date" value={form.due_date} onChange={e=>setForm({...form,due_date:e.target.value})} required/></div>
-                <div className="flex items-center space-x-2 bg-stone-50 p-3 rounded border border-stone-100">
-                    <Checkbox checked={form.is_paid} onCheckedChange={checked => setForm({...form, is_paid: checked})} id="is_paid_checkbox"/>
-                    <label htmlFor="is_paid_checkbox" className="text-sm font-medium leading-none cursor-pointer">Despesa Paga</label>
-                </div>
-                <div className="flex justify-end gap-3 pt-4">
-                    <Button variant="outline" onClick={onClose} type="button">Cancelar</Button>
-                    <Button type="submit" disabled={isSaving} className="bg-stone-900 text-white">{isSaving ? 'Salvando...' : 'Salvar'}</Button>
-                </div>
-            </form>
+            <div className="flex-1 overflow-y-auto px-6 py-2">
+                <form id="expense-form" onSubmit={handleSubmit} className="space-y-4">
+                    <div><Label>Descrição *</Label><Input placeholder="Descrição" value={form.description} onChange={e=>setForm({...form,description:e.target.value})} required/></div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div><Label>Categoria *</Label>
+                        <Select value={form.category} onValueChange={v=>setForm({...form,category:v})} required>
+                            <SelectTrigger><SelectValue placeholder="Categoria"/></SelectTrigger>
+                            <SelectContent className="max-h-[200px]">
+                                {EXPENSE_CATEGORIES.map(c=><SelectItem key={c} value={c}>{c}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                        </div>
+                        <div><Label>Valor *</Label><Input type="number" step="0.01" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})} required/></div>
+                    </div>
+                    <div><Label>Vencimento *</Label><Input type="date" value={form.due_date} onChange={e=>setForm({...form,due_date:e.target.value})} required/></div>
+                    <div className="flex items-center space-x-2 bg-stone-50 p-3 rounded border border-stone-100">
+                        <Checkbox checked={form.is_paid} onCheckedChange={checked => setForm({...form, is_paid: checked})} id="is_paid_checkbox"/>
+                        <label htmlFor="is_paid_checkbox" className="text-sm font-medium leading-none cursor-pointer">Despesa Paga</label>
+                    </div>
+                </form>
+            </div>
+            <div className="p-6 pt-2 flex justify-end gap-3 bg-white border-t border-stone-100">
+                <Button variant="outline" onClick={onClose} type="button">Cancelar</Button>
+                <Button type="submit" form="expense-form" disabled={isSaving} className="bg-stone-900 text-white">{isSaving ? 'Salvando...' : 'Salvar'}</Button>
+            </div>
         </DialogContent>
     </Dialog>
   ); 

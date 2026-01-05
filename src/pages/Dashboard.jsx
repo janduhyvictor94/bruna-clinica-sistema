@@ -84,7 +84,7 @@ export default function Dashboard() {
     onError: (e) => toast.error("Erro: " + e.message)
   });
 
-  // --- MUTAÇÃO INTELIGENTE DE RECEBIMENTO (CORRIGIDA) ---
+  // --- MUTAÇÃO INTELIGENTE DE RECEBIMENTO ---
   const processPaymentMutation = useMutation({
     mutationFn: async ({ id, method, discountPercent, installmentsCount, originalValue, appointmentId, patientName }) => {
         
@@ -93,32 +93,21 @@ export default function Dashboard() {
         const today = new Date();
         const apptId = Number(appointmentId);
         
-        // CORREÇÃO: Para pagamentos à vista (Pix, Dinheiro) de agendamentos anteriores,
-        // NÃO deletamos a parcela. Apenas marcamos como recebida hoje.
-        // Isso garante que o valor apareça no fluxo de caixa (Financeiro) na data correta.
         if (!IS_CREDIT_PARCELADO && !IS_PARCELED_PAYMENT) {
-             // Atualiza a parcela existente para "Recebida" hoje
              await supabase.from('installments').update({
                  is_received: true,
                  received_date: today.toISOString(),
-                 // Opcional: Poderíamos salvar o método na tabela installments se tivéssemos a coluna, 
-                 // mas manteremos a compatibilidade com a estrutura atual.
              }).eq('id', id);
 
         } else {
-            // LÓGICA DE PARCELAMENTO/CRÉDITO (Mantém na tabela installments)
-            
-            // 1. Calcula o valor base e a primeira parcela
             const baseInstallmentValue = originalValue / installmentsCount;
             const discountValue = baseInstallmentValue * (discountPercent / 100);
             const firstInstallmentPaidValue = baseInstallmentValue - discountValue;
             
-            // 2. Determina o VENCIMENTO e RECEBIMENTO da 1ª parcela
             let firstInstallmentDueDate;
             let firstInstallmentReceivedDate;
             
             if (IS_CREDIT_PARCELADO || IS_PARCELED_PAYMENT) {
-                // 1ª parcela vence no próximo mês
                 firstInstallmentDueDate = addMonths(today, 1); 
                 
                 if (IS_CREDIT_PARCELADO) {
@@ -131,7 +120,6 @@ export default function Dashboard() {
                 firstInstallmentReceivedDate = today.toISOString();
             }
 
-            // 3. Atualiza a parcela atual (ID clicado) - É a 1ª Parcela
             const { error: updateError } = await supabase.from('installments').update({
                 value: firstInstallmentPaidValue, 
                 is_received: true, 
@@ -143,7 +131,6 @@ export default function Dashboard() {
             
             if(updateError) throw updateError;
 
-            // 4. Cria as parcelas futuras, se houver
             if (installmentsCount > 1) {
                 const newInstallments = [];
                 for (let i = 2; i <= installmentsCount; i++) { 
@@ -168,11 +155,6 @@ export default function Dashboard() {
                 }
             }
         }
-        
-        // CORREÇÃO: Removemos a atualização do JSON do atendimento ('appointments') aqui.
-        // Motivo: Se atualizarmos o JSON de "Agendamento" para "Pix", o Financeiro pode contar duplicado
-        // ou na data errada (data do atendimento vs data do pagamento).
-        // Mantendo como "Agendamento" no JSON, o Financeiro ignora o JSON e contabiliza a parcela recebida acima.
     },
     onSuccess: () => { 
         queryClient.invalidateQueries();
@@ -242,7 +224,14 @@ export default function Dashboard() {
     const currentMonthEnd = endOfMonth(today);
 
     const monthAppts = appointments.filter(a => { const d = parseISO(a.date); return isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd }) && a.status === 'Realizado'; });
-    const monthExps = expenses.filter(e => { const d = parseISO(e.due_date); return isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd }); });
+    
+    // CORREÇÃO AQUI: Filtra despesas do mês que estão PAGAS (is_paid === true)
+    const monthExps = expenses.filter(e => { 
+        if (!e.is_paid) return false;
+        const d = parseISO(e.due_date); 
+        return isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd }); 
+    });
+
     const monthInstallments = installments.filter(i => { 
         if(!i.received_date) return false;
         const d = parseISO(i.received_date); 
@@ -254,20 +243,17 @@ export default function Dashboard() {
             const isPending = !i.is_received;
             const isSoon = isWithinInterval(parseISO(i.due_date), { start: today, end: next30Days });
             const methods = i.appointments?.payment_methods_json || [];
-            // Filtro para mostrar apenas Agendamento de Pagamento no aviso
             const isScheduledPayment = methods.some(m => m.method === 'Agendamento de Pagamento');
             
             return isPending && isScheduledPayment && isSoon; 
         })
         .sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
 
-    // CORREÇÃO: Faturamento do mês (só Pix, Dinheiro, Débito e Parcelas já recebidas)
     const totalRevenueFromAppointments = monthAppts.reduce((sum, appt) => {
         const methods = appt.payment_methods_json || [];
         const cashPart = methods
             .filter(m => {
                 const method = m.method || '';
-                // EXCLUI: Cartão de Crédito E Agendamento de Pagamento
                 const isInstallmentStarter = CREDIT_METHODS.includes(method) || method === 'Agendamento de Pagamento';
                 return !isInstallmentStarter;
             })
@@ -325,6 +311,7 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard title="Faturamento (Mês)" value={<span className="text-lg sm:text-xl font-bold tracking-tight">R$ {stats.totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={DollarSign} />
+        {/* Agora este card só mostra despesas PAGAS + Custos variáveis */}
         <StatCard title="Despesas (Mês)" value={<span className="text-lg sm:text-xl font-bold tracking-tight">R$ {stats.totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingDown} />
         <StatCard title="Líquido (Mês)" value={<span className="text-lg sm:text-xl font-bold tracking-tight">R$ {stats.profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingUp} className={stats.profit >= 0 ? 'border-emerald-200 bg-emerald-50 dark:bg-emerald-900/20' : 'border-rose-200 bg-rose-50 dark:bg-rose-900/20'} />
         <StatCard title="Realizados (Mês)" value={stats.monthCount} icon={Calendar} />
@@ -509,7 +496,6 @@ export default function Dashboard() {
                             const isScheduled = pm.method === 'Agendamento de Pagamento';
                             const numInstallments = Number(pm.installments)||1;
                             
-                            // Caso 1: Agendamento de Pagamento (CRIA APENAS 1 PARCELA PENDENTE COM O VALOR TOTAL)
                             if (isScheduled) {
                                 if (!pm.scheduled_date) {
                                     throw new Error(`Selecione a data de vencimento para o Agendamento de Pagamento de R$ ${totalVal.toFixed(2).replace('.', ',')}.`);
@@ -524,7 +510,6 @@ export default function Dashboard() {
                                     is_received: false
                                 });
                             }
-                            // Caso 2: Parcelamento Cartão (Contabilizado no Mês Seguinte)
                             else if (isCreditCard) {
                                 const valPerInst = totalVal/numInstallments;
                                 const appointmentDate = parseISO(payload.date);
@@ -542,7 +527,6 @@ export default function Dashboard() {
                                     });
                                 }
                             } 
-                            // Pagamentos à vista (Dinheiro, Pix, Débito) NÃO criam parcelas aqui (evita duplicação)
                         });
                     }
                     if (installmentsPayload.length) {
@@ -550,7 +534,6 @@ export default function Dashboard() {
                         if (instError) throw instError;
                     }
                 } else if (id) {
-                    // *** LIMPEZA SE O STATUS MUDAR PARA ALGO QUE NÃO É REALIZADO ***
                     await supabase.from('stock_movements').delete().eq('appointment_id', apptId);
                     await supabase.from('installments').delete().eq('appointment_id', apptId);
                 }
