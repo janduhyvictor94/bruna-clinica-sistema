@@ -9,7 +9,7 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Plus, Calendar, User, FileText, ChevronDown, ChevronUp, History, CreditCard, X, Trash2, Syringe, Package, Stethoscope, Check, Filter } from 'lucide-react';
+import { Search, Plus, Calendar, User, FileText, ChevronDown, ChevronUp, History, CreditCard, X, Trash2, Syringe, Package, Stethoscope, Check, Filter, Phone } from 'lucide-react';
 import { toast } from 'sonner';
 import { format, parseISO, addMonths, addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -17,12 +17,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
+// ATUALIZAÇÃO: Status renomeado para "Realizado"
 const STATUS_OPTIONS = [
   'Agendado', 
   'Confirmado', 
+  'Realizado', // Antigo "Realizado Pagamento em Atendimento"
   'Realizado Pago', 
   'Realizado a Pagar', 
-  'Realizado Pagamento em Atendimento', 
   'Cancelado'
 ];
 
@@ -39,8 +40,6 @@ const CREDIT_METHODS = ['Cartão de Crédito PJ', 'Cartão de Crédito PF'];
 
 export default function Appointments() {
   const [search, setSearch] = useState('');
-  
-  // NOVO ESTADO PARA O FILTRO DE DATA
   const [filterDate, setFilterDate] = useState('');
   
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -66,25 +65,21 @@ export default function Appointments() {
   const groupedAppointments = useMemo(() => {
     const groups = {};
     appointments.forEach(app => {
-        // 1. Filtro de Nome
         const pId = app.patient_id;
         const pName = app.patients?.full_name || 'Desconhecido';
         if (search && !pName.toLowerCase().includes(search.toLowerCase())) return;
-
-        // 2. NOVO FILTRO DE DATA
-        // Se houver uma data selecionada, ignoramos agendamentos que não sejam desse dia
         if (filterDate && app.date !== filterDate) return;
 
         if (!groups[pId]) { 
             groups[pId] = { 
-                patient: app.patients || { id: pId, full_name: 'Paciente Excluído' }, 
+                patient: app.patients || { id: pId, full_name: 'Paciente Excluído', phone: '' }, 
                 history: [] 
             }; 
         }
         groups[pId].history.push(app);
     });
     return Object.values(groups);
-  }, [appointments, search, filterDate]); // Adicionei filterDate nas dependências
+  }, [appointments, search, filterDate]);
 
   const saveMutation = useMutation({
     mutationFn: async (data) => {
@@ -259,34 +254,16 @@ export default function Appointments() {
     <div className="space-y-6 p-4 animate-in fade-in duration-500">
       <PageHeader title="Atendimentos" subtitle="Histórico agrupado por paciente" action={<Button onClick={() => { setEditingAppointment(null); setIsModalOpen(true); }} className="bg-stone-900 text-white hover:bg-stone-800 shadow-md"><Plus className="w-4 h-4 mr-2"/> Novo Atendimento</Button>}/>
       
-      {/* BARRA DE FILTROS APRIMORADA */}
       <div className="flex flex-col sm:flex-row gap-4 max-w-4xl">
           <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-stone-400 w-4 h-4" />
               <Input placeholder="Buscar paciente..." className="pl-10 bg-white border-stone-200 rounded-full shadow-sm" value={search} onChange={(e) => setSearch(e.target.value)}/>
           </div>
           
-          {/* NOVO CAMPO DE DATA COM BOTÃO DE LIMPAR */}
           <div className="flex items-center gap-2 bg-white border border-stone-200 rounded-full px-3 py-1 shadow-sm w-full sm:w-auto">
               <Filter className="w-4 h-4 text-stone-400" />
-              <Input 
-                type="date" 
-                className="border-none bg-transparent h-8 w-full sm:w-36 focus-visible:ring-0 px-0 text-sm text-stone-600"
-                value={filterDate}
-                onChange={(e) => setFilterDate(e.target.value)}
-                title="Filtrar por dia específico"
-              />
-              {filterDate && (
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    className="h-6 w-6 rounded-full hover:bg-stone-100" 
-                    onClick={() => setFilterDate('')}
-                    title="Limpar filtro de data"
-                  >
-                      <X className="w-3 h-3 text-stone-400"/>
-                  </Button>
-              )}
+              <Input type="date" className="border-none bg-transparent h-8 w-full sm:w-36 focus-visible:ring-0 px-0 text-sm text-stone-600" value={filterDate} onChange={(e) => setFilterDate(e.target.value)} title="Filtrar por dia específico" />
+              {filterDate && (<Button variant="ghost" size="icon" className="h-6 w-6 rounded-full hover:bg-stone-100" onClick={() => setFilterDate('')} title="Limpar filtro de data"><X className="w-3 h-3 text-stone-400"/></Button>)}
           </div>
       </div>
 
@@ -299,17 +276,20 @@ export default function Appointments() {
                         <div className="w-12 h-12 rounded-full bg-stone-100 flex items-center justify-center text-stone-600 font-serif font-bold text-lg border border-stone-200">{group.patient?.full_name?.charAt(0).toUpperCase()}</div>
                         <div>
                             <h3 className="font-bold text-stone-800 text-lg">{group.patient?.full_name}</h3>
-                            <p className="text-xs text-stone-500">
-                                {filterDate 
-                                    ? `Atendimento em ${format(parseISO(filterDate), 'dd/MM/yyyy')}`
-                                    : `${group.history.length} atendimentos totais`
-                                }
+                            {/* ATUALIZAÇÃO: Exibição do WhatsApp */}
+                            {group.patient?.phone && (
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                    <Phone className="w-3 h-3 text-stone-400" />
+                                    <span className="text-xs text-stone-500 font-medium">{group.patient.phone}</span>
+                                </div>
+                            )}
+                            <p className="text-xs text-stone-400 mt-0.5">
+                                {filterDate ? `Atendimento em ${format(parseISO(filterDate), 'dd/MM/yyyy')}` : `${group.history.length} atendimentos totais`}
                             </p>
                         </div>
                     </div>
                     <Button variant="ghost" size="icon">{expandedPatientId === group.patient?.id ? <ChevronUp className="w-5 h-5 text-stone-400"/> : <ChevronDown className="w-5 h-5 text-stone-400"/>}</Button>
                 </div>
-                {/* Se filtrar por data, já expande automaticamente para mostrar o resultado */}
                 {(expandedPatientId === group.patient?.id || filterDate) && (
                     <div className="border-t border-stone-100 bg-stone-50/50 p-4 space-y-3">
                         {group.history.map(app => (
@@ -341,8 +321,6 @@ export default function Appointments() {
   );
 }
 
-// ... Resto do arquivo (AppointmentModal) permanece igual ...
-// (Atenção: Mantenha a função AppointmentModal que estava no código anterior ou adicione-a aqui se estiver substituindo o arquivo inteiro)
 export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDelete, isSaving }) {
     const { data: patientsList = [] } = useQuery({ queryKey: ['patients_select'], queryFn: async () => { const { data } = await supabase.from('patients').select('id, full_name').order('full_name'); return data || []; }, enabled: !!open });
     const { data: proceduresList = [] } = useQuery({ queryKey: ['procedures_select'], queryFn: async () => { const { data } = await supabase.from('procedures').select('*').order('name'); return data || []; }, enabled: !!open });

@@ -104,26 +104,24 @@ export default function Schedule() {
     });
   };
 
-  // --- LÓGICA DE CORES DEFINITIVA E SEM DUPLICAÇÃO ---
+  // --- LÓGICA DE CORES ATUALIZADA ---
   const getEventStyle = (appt) => {
       const s = appt.status;
       const t = appt.type;
 
-      // 1. Status Críticos (Vermelho)
+      // 1. Status Críticos
       if (s === 'Cancelado') return 'bg-red-50 text-red-700 border-l-4 border-red-500 opacity-60';
       
-      // 2. Realizados (Cores Distintas por Pagamento)
-      if (s === 'Realizado Pago') return 'bg-emerald-100 text-emerald-900 border-l-4 border-emerald-600'; // Verde Escuro (Dinheiro)
-      if (s === 'Realizado a Pagar') return 'bg-orange-100 text-orange-800 border-l-4 border-orange-500'; // Laranja (Alerta)
-      if (s === 'Realizado Pagamento em Atendimento') return 'bg-cyan-100 text-cyan-800 border-l-4 border-cyan-500'; // Ciano (Processando)
-      if (s === 'Realizado') return 'bg-stone-200 text-stone-600 border-l-4 border-stone-500 line-through decoration-stone-400/50'; // Cinza (Antigo)
+      // 2. Realizados (Cores Distintas)
+      if (s === 'Realizado Pago') return 'bg-emerald-100 text-emerald-900 border-l-4 border-emerald-600'; // Verde
+      if (s === 'Realizado a Pagar') return 'bg-orange-100 text-orange-800 border-l-4 border-orange-500'; // Laranja
+      if (s === 'Realizado') return 'bg-cyan-100 text-cyan-800 border-l-4 border-cyan-500'; // Ciano (Antigo "Em Atendimento")
       
-      // 3. Confirmados (Verde Lima - Diferente do Esmeralda)
+      // 3. Confirmados
       if (s === 'Confirmado') return 'bg-lime-100 text-lime-800 border-l-4 border-lime-500';
 
-      // 4. Agendados (Diferenciar por Tipo)
+      // 4. Agendados
       if (t === 'Novo') return 'bg-blue-100 text-blue-800 border-l-4 border-blue-500'; // Azul
-      // Retorno / Recorrente (Padrão para outros agendados)
       return 'bg-purple-100 text-purple-800 border-l-4 border-purple-500'; // Roxo
   };
 
@@ -294,11 +292,11 @@ export default function Schedule() {
                                           evt.status === 'Cancelado' ? 'bg-red-50 text-red-700 border-red-200' :
                                           evt.status === 'Realizado Pago' ? 'bg-emerald-100 text-emerald-800 border-emerald-200' :
                                           evt.status === 'Realizado a Pagar' ? 'bg-orange-100 text-orange-700 border-orange-200' :
-                                          evt.status.includes('Em Atendimento') ? 'bg-cyan-100 text-cyan-700 border-cyan-200' :
+                                          evt.status === 'Realizado' ? 'bg-cyan-100 text-cyan-700 border-cyan-200' :
                                           evt.type === 'Novo' ? 'bg-blue-100 text-blue-700 border-blue-200' :
                                           'bg-purple-100 text-purple-700 border-purple-200'
                                         }`}>
-                                          {evt.status === 'Agendado' ? evt.type : (evt.status.replace('Realizado ', 'R. '))}
+                                          {evt.status === 'Agendado' ? evt.type : evt.status}
                                       </span>
                                   </div>
                               </div>
@@ -314,7 +312,7 @@ export default function Schedule() {
                   <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-lime-100 border-l-2 border-lime-500"></div><span className="text-stone-600">Confirmado</span></div>
                   <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-emerald-100 border-l-2 border-emerald-600"></div><span className="text-stone-600">Realizado (Pago)</span></div>
                   <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-orange-100 border-l-2 border-orange-500"></div><span className="text-stone-600">Realizado (A Pagar)</span></div>
-                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-cyan-100 border-l-2 border-cyan-500"></div><span className="text-stone-600">Em Atendimento</span></div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-cyan-100 border-l-2 border-cyan-500"></div><span className="text-stone-600">Realizado</span></div>
                   <div className="flex items-center gap-2 col-span-2"><div className="w-3 h-3 rounded bg-red-100 border-l-2 border-red-500"></div><span className="text-stone-600">Cancelado</span></div>
               </div>
           </Card>
@@ -328,12 +326,12 @@ export default function Schedule() {
               </div>
 
               <div className="flex-1 bg-white rounded-xl border border-stone-200 overflow-hidden flex flex-col shadow-sm">
-                  {/* Cabeçalho dos Dias */}
+                  {/* Cabeçalho dos Dias (FIXO) */}
                   <div className="grid grid-cols-7 border-b border-stone-100 bg-stone-50 shrink-0">
                       {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => <div key={d} className="p-3 text-center text-xs font-bold text-stone-500 uppercase">{d}</div>)}
                   </div>
                   
-                  {/* Área de Dias */}
+                  {/* Área de Dias (ROLÁVEL) */}
                   <div className="flex-1 overflow-y-auto">
                     <div className="grid grid-cols-7 min-h-full auto-rows-fr pb-10">
                         {calendarDays.map((day, i) => {
@@ -398,7 +396,7 @@ export default function Schedule() {
                                             dayEvents.map(ev => (
                                                 <div 
                                                     key={ev.id}
-                                                    // CORES APLICADAS AQUI
+                                                    // APLICANDO A NOVA LÓGICA DE CORES AQUI
                                                     className={`text-[10px] px-1.5 py-1 rounded truncate shadow-sm border-l-2 cursor-pointer transition-transform active:scale-95 ${getEventStyle(ev)}`}
                                                     onClick={(e) => {
                                                         e.stopPropagation(); 
