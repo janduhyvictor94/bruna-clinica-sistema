@@ -5,7 +5,7 @@ import PageHeader from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ChevronLeft, ChevronRight, Plus, Calendar as CalIcon, Lock, Unlock, Ban } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Calendar as CalIcon, Lock, Unlock, Ban, Info } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, isSameMonth, isSameDay, addMonths, subMonths, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { AppointmentModal } from './Appointments';
@@ -104,11 +104,27 @@ export default function Schedule() {
     });
   };
 
-  const statusColor = (s) => {
-      if(s==='Confirmado') return 'bg-emerald-600 hover:bg-emerald-700 border-emerald-600 text-white';
-      if(s==='Cancelado') return 'bg-rose-500 hover:bg-rose-600 border-rose-500 text-white';
-      if(s==='Realizado') return 'bg-stone-500 hover:bg-stone-600 border-stone-500 text-white';
-      return 'bg-blue-500 hover:bg-blue-600 border-blue-500 text-white'; 
+  // --- LÓGICA DE CORES DEFINITIVA E SEM DUPLICAÇÃO ---
+  const getEventStyle = (appt) => {
+      const s = appt.status;
+      const t = appt.type;
+
+      // 1. Status Críticos (Vermelho)
+      if (s === 'Cancelado') return 'bg-red-50 text-red-700 border-l-4 border-red-500 opacity-60';
+      
+      // 2. Realizados (Cores Distintas por Pagamento)
+      if (s === 'Realizado Pago') return 'bg-emerald-100 text-emerald-900 border-l-4 border-emerald-600'; // Verde Escuro (Dinheiro)
+      if (s === 'Realizado a Pagar') return 'bg-orange-100 text-orange-800 border-l-4 border-orange-500'; // Laranja (Alerta)
+      if (s === 'Realizado Pagamento em Atendimento') return 'bg-cyan-100 text-cyan-800 border-l-4 border-cyan-500'; // Ciano (Processando)
+      if (s === 'Realizado') return 'bg-stone-200 text-stone-600 border-l-4 border-stone-500 line-through decoration-stone-400/50'; // Cinza (Antigo)
+      
+      // 3. Confirmados (Verde Lima - Diferente do Esmeralda)
+      if (s === 'Confirmado') return 'bg-lime-100 text-lime-800 border-l-4 border-lime-500';
+
+      // 4. Agendados (Diferenciar por Tipo)
+      if (t === 'Novo') return 'bg-blue-100 text-blue-800 border-l-4 border-blue-500'; // Azul
+      // Retorno / Recorrente (Padrão para outros agendados)
+      return 'bg-purple-100 text-purple-800 border-l-4 border-purple-500'; // Roxo
   };
 
   const handleDeleteAppointment = async (id) => {
@@ -170,7 +186,7 @@ export default function Schedule() {
         
         const apptId = Number(appointmentId);
 
-        if (payload.status === 'Realizado') {
+        if (payload.status.includes('Realizado')) {
             await supabase.from('stock_movements').delete().eq('appointment_id', apptId);
             await supabase.from('installments').delete().eq('appointment_id', apptId);
 
@@ -242,7 +258,6 @@ export default function Schedule() {
 
 
   return (
-    // AJUSTE 1: Container principal centralizado (mx-auto), com largura máxima (max-w-[1600px]) e altura fixa calculada
     <div className="flex flex-col h-[calc(100vh-120px)] w-full max-w-[1600px] mx-auto space-y-4">
       <PageHeader 
         title="Agenda" 
@@ -250,7 +265,6 @@ export default function Schedule() {
         action={<Button onClick={() => { setEditingAppointment(null); setIsModalOpen(true); }} className="bg-stone-800"><Plus className="w-4 h-4 mr-2"/> Novo</Button>} 
       />
       
-      {/* AJUSTE 2: min-h-0 é crucial para que o conteúdo interno tenha barra de rolagem e não a tela inteira */}
       <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
           
           {/* BARRA LATERAL */}
@@ -274,8 +288,17 @@ export default function Schedule() {
                                   </p>
                                   <div className="flex items-center gap-2 mt-1">
                                       <Badge variant="outline" className="text-[10px] h-5">{evt.time}</Badge>
-                                      <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ${statusColor(evt.status)}`}>
-                                          {evt.status}
+                                      {/* Badge Colorido na Lista Lateral */}
+                                      <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase border 
+                                        ${evt.status === 'Confirmado' ? 'bg-lime-100 text-lime-800 border-lime-200' :
+                                          evt.status === 'Cancelado' ? 'bg-red-50 text-red-700 border-red-200' :
+                                          evt.status === 'Realizado Pago' ? 'bg-emerald-100 text-emerald-800 border-emerald-200' :
+                                          evt.status === 'Realizado a Pagar' ? 'bg-orange-100 text-orange-700 border-orange-200' :
+                                          evt.status.includes('Em Atendimento') ? 'bg-cyan-100 text-cyan-700 border-cyan-200' :
+                                          evt.type === 'Novo' ? 'bg-blue-100 text-blue-700 border-blue-200' :
+                                          'bg-purple-100 text-purple-700 border-purple-200'
+                                        }`}>
+                                          {evt.status === 'Agendado' ? evt.type : (evt.status.replace('Realizado ', 'R. '))}
                                       </span>
                                   </div>
                               </div>
@@ -283,6 +306,17 @@ export default function Schedule() {
                       )) : <p className="text-center text-xs text-stone-400 py-10">Sem agendamentos.</p>}
                   </div>
               </ScrollArea>
+              
+              {/* LEGENDA DE CORES DEFINITIVA */}
+              <div className="p-4 border-t border-stone-100 bg-stone-50/50 text-[10px] grid grid-cols-2 gap-2">
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-100 border-l-2 border-blue-500"></div><span className="text-stone-600">Novo (Agendado)</span></div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-100 border-l-2 border-purple-500"></div><span className="text-stone-600">Retorno (Agendado)</span></div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-lime-100 border-l-2 border-lime-500"></div><span className="text-stone-600">Confirmado</span></div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-emerald-100 border-l-2 border-emerald-600"></div><span className="text-stone-600">Realizado (Pago)</span></div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-orange-100 border-l-2 border-orange-500"></div><span className="text-stone-600">Realizado (A Pagar)</span></div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-cyan-100 border-l-2 border-cyan-500"></div><span className="text-stone-600">Em Atendimento</span></div>
+                  <div className="flex items-center gap-2 col-span-2"><div className="w-3 h-3 rounded bg-red-100 border-l-2 border-red-500"></div><span className="text-stone-600">Cancelado</span></div>
+              </div>
           </Card>
 
           {/* CALENDÁRIO VISUAL */}
@@ -294,14 +328,13 @@ export default function Schedule() {
               </div>
 
               <div className="flex-1 bg-white rounded-xl border border-stone-200 overflow-hidden flex flex-col shadow-sm">
-                  {/* Cabeçalho dos Dias (FIXO) */}
+                  {/* Cabeçalho dos Dias */}
                   <div className="grid grid-cols-7 border-b border-stone-100 bg-stone-50 shrink-0">
                       {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => <div key={d} className="p-3 text-center text-xs font-bold text-stone-500 uppercase">{d}</div>)}
                   </div>
                   
-                  {/* Área de Dias (ROLÁVEL) */}
+                  {/* Área de Dias */}
                   <div className="flex-1 overflow-y-auto">
-                    {/* AJUSTE 3: Padding no final para não colar no rodapé */}
                     <div className="grid grid-cols-7 min-h-full auto-rows-fr pb-10">
                         {calendarDays.map((day, i) => {
                             const dateKey = format(day, 'yyyy-MM-dd');
@@ -365,12 +398,13 @@ export default function Schedule() {
                                             dayEvents.map(ev => (
                                                 <div 
                                                     key={ev.id}
-                                                    className={`text-[10px] px-1.5 py-1 rounded truncate shadow-sm border-l-2 cursor-pointer transition-transform active:scale-95 ${statusColor(ev.status)}`}
+                                                    // CORES APLICADAS AQUI
+                                                    className={`text-[10px] px-1.5 py-1 rounded truncate shadow-sm border-l-2 cursor-pointer transition-transform active:scale-95 ${getEventStyle(ev)}`}
                                                     onClick={(e) => {
                                                         e.stopPropagation(); 
                                                         handleOpen(ev);
                                                     }}
-                                                    title={`${ev.time} - ${ev.patients?.full_name}`}
+                                                    title={`${ev.time} - ${ev.patients?.full_name} (${ev.status})`}
                                                 >
                                                     <span className="font-bold mr-1">{ev.time}</span>
                                                     {ev.patients?.full_name || 'S/ Nome'}

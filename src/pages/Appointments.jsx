@@ -9,7 +9,7 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Plus, Calendar, User, FileText, ChevronDown, ChevronUp, History, CreditCard, X, Trash2, Syringe, Package, Stethoscope, Check } from 'lucide-react';
+import { Search, Plus, Calendar, User, FileText, ChevronDown, ChevronUp, History, CreditCard, X, Trash2, Syringe, Package, Stethoscope, Check, Filter } from 'lucide-react';
 import { toast } from 'sonner';
 import { format, parseISO, addMonths, addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -17,7 +17,15 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
-const STATUS_OPTIONS = ['Agendado', 'Confirmado', 'Realizado', 'Cancelado'];
+const STATUS_OPTIONS = [
+  'Agendado', 
+  'Confirmado', 
+  'Realizado Pago', 
+  'Realizado a Pagar', 
+  'Realizado Pagamento em Atendimento', 
+  'Cancelado'
+];
+
 const TYPE_OPTIONS = ['Novo', 'Recorrente'];
 
 const PAYMENT_METHOD_OPTIONS = [
@@ -26,12 +34,15 @@ const PAYMENT_METHOD_OPTIONS = [
   'Parceria', 'Troca em Procedimento', 'Agendamento de Pagamento'
 ];
 
-// LISTA DE MÉTODOS COM DESCONTO
 const DISCOUNT_ALLOWED_METHODS = ['Dinheiro', 'Pix PF', 'Pix PJ', 'Débito PJ', 'Débito PF'];
 const CREDIT_METHODS = ['Cartão de Crédito PJ', 'Cartão de Crédito PF'];
 
 export default function Appointments() {
   const [search, setSearch] = useState('');
+  
+  // NOVO ESTADO PARA O FILTRO DE DATA
+  const [filterDate, setFilterDate] = useState('');
+  
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAppointment, setEditingAppointment] = useState(null);
   const [expandedPatientId, setExpandedPatientId] = useState(null);
@@ -55,9 +66,15 @@ export default function Appointments() {
   const groupedAppointments = useMemo(() => {
     const groups = {};
     appointments.forEach(app => {
+        // 1. Filtro de Nome
         const pId = app.patient_id;
         const pName = app.patients?.full_name || 'Desconhecido';
         if (search && !pName.toLowerCase().includes(search.toLowerCase())) return;
+
+        // 2. NOVO FILTRO DE DATA
+        // Se houver uma data selecionada, ignoramos agendamentos que não sejam desse dia
+        if (filterDate && app.date !== filterDate) return;
+
         if (!groups[pId]) { 
             groups[pId] = { 
                 patient: app.patients || { id: pId, full_name: 'Paciente Excluído' }, 
@@ -67,7 +84,7 @@ export default function Appointments() {
         groups[pId].history.push(app);
     });
     return Object.values(groups);
-  }, [appointments, search]);
+  }, [appointments, search, filterDate]); // Adicionei filterDate nas dependências
 
   const saveMutation = useMutation({
     mutationFn: async (data) => {
@@ -106,10 +123,8 @@ export default function Appointments() {
         }
 
         const apptId = Number(appointmentId);
-        if (isNaN(apptId)) throw new Error("ID de agendamento inválido após salvar.");
         
-        if (payload.status === 'Realizado') {
-            
+        if (payload.status.includes('Realizado')) {
             await supabase.from('stock_movements').delete().eq('appointment_id', apptId);
             await supabase.from('installments').delete().eq('appointment_id', apptId);
 
@@ -243,16 +258,59 @@ export default function Appointments() {
   return (
     <div className="space-y-6 p-4 animate-in fade-in duration-500">
       <PageHeader title="Atendimentos" subtitle="Histórico agrupado por paciente" action={<Button onClick={() => { setEditingAppointment(null); setIsModalOpen(true); }} className="bg-stone-900 text-white hover:bg-stone-800 shadow-md"><Plus className="w-4 h-4 mr-2"/> Novo Atendimento</Button>}/>
-      <div className="relative max-w-lg mx-auto md:mx-0"><Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-stone-400 w-4 h-4" /><Input placeholder="Buscar paciente..." className="pl-10 bg-white border-stone-200 rounded-full shadow-sm" value={search} onChange={(e) => setSearch(e.target.value)}/></div>
+      
+      {/* BARRA DE FILTROS APRIMORADA */}
+      <div className="flex flex-col sm:flex-row gap-4 max-w-4xl">
+          <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-stone-400 w-4 h-4" />
+              <Input placeholder="Buscar paciente..." className="pl-10 bg-white border-stone-200 rounded-full shadow-sm" value={search} onChange={(e) => setSearch(e.target.value)}/>
+          </div>
+          
+          {/* NOVO CAMPO DE DATA COM BOTÃO DE LIMPAR */}
+          <div className="flex items-center gap-2 bg-white border border-stone-200 rounded-full px-3 py-1 shadow-sm w-full sm:w-auto">
+              <Filter className="w-4 h-4 text-stone-400" />
+              <Input 
+                type="date" 
+                className="border-none bg-transparent h-8 w-full sm:w-36 focus-visible:ring-0 px-0 text-sm text-stone-600"
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+                title="Filtrar por dia específico"
+              />
+              {filterDate && (
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className="h-6 w-6 rounded-full hover:bg-stone-100" 
+                    onClick={() => setFilterDate('')}
+                    title="Limpar filtro de data"
+                  >
+                      <X className="w-3 h-3 text-stone-400"/>
+                  </Button>
+              )}
+          </div>
+      </div>
+
       <div className="space-y-4">
         {isLoading ? <p className="text-center text-stone-400 py-10">Carregando...</p> : 
          groupedAppointments.length > 0 ? groupedAppointments.map(group => (
             <Card key={group.patient?.id || Math.random()} className="border-stone-100 bg-white overflow-hidden shadow-sm hover:shadow-md transition-all">
                 <div className="p-4 flex items-center justify-between cursor-pointer hover:bg-stone-50" onClick={() => setExpandedPatientId(expandedPatientId === group.patient?.id ? null : group.patient?.id)}>
-                    <div className="flex items-center gap-4"><div className="w-12 h-12 rounded-full bg-stone-100 flex items-center justify-center text-stone-600 font-serif font-bold text-lg border border-stone-200">{group.patient?.full_name?.charAt(0).toUpperCase()}</div><div><h3 className="font-bold text-stone-800 text-lg">{group.patient?.full_name}</h3><p className="text-xs text-stone-500">{group.history.length} atendimentos</p></div></div>
+                    <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-full bg-stone-100 flex items-center justify-center text-stone-600 font-serif font-bold text-lg border border-stone-200">{group.patient?.full_name?.charAt(0).toUpperCase()}</div>
+                        <div>
+                            <h3 className="font-bold text-stone-800 text-lg">{group.patient?.full_name}</h3>
+                            <p className="text-xs text-stone-500">
+                                {filterDate 
+                                    ? `Atendimento em ${format(parseISO(filterDate), 'dd/MM/yyyy')}`
+                                    : `${group.history.length} atendimentos totais`
+                                }
+                            </p>
+                        </div>
+                    </div>
                     <Button variant="ghost" size="icon">{expandedPatientId === group.patient?.id ? <ChevronUp className="w-5 h-5 text-stone-400"/> : <ChevronDown className="w-5 h-5 text-stone-400"/>}</Button>
                 </div>
-                {expandedPatientId === group.patient?.id && (
+                {/* Se filtrar por data, já expande automaticamente para mostrar o resultado */}
+                {(expandedPatientId === group.patient?.id || filterDate) && (
                     <div className="border-t border-stone-100 bg-stone-50/50 p-4 space-y-3">
                         {group.history.map(app => (
                             <div key={app.id} className="bg-white border border-stone-200 rounded-xl p-4 flex flex-col md:flex-row justify-between items-center gap-4 hover:border-border-300">
@@ -263,7 +321,11 @@ export default function Appointments() {
                     </div>
                 )}
             </Card>
-         )) : <div className="text-center py-20 text-stone-400 border-2 border-dashed border-stone-200 rounded-xl bg-stone-50"><p>Nenhum atendimento.</p></div>
+         )) : (
+            <div className="text-center py-20 text-stone-400 border-2 border-dashed border-stone-200 rounded-xl bg-stone-50">
+                {filterDate ? <p>Nenhum atendimento encontrado na data {format(parseISO(filterDate), 'dd/MM/yyyy')}.</p> : <p>Nenhum atendimento.</p>}
+            </div>
+         )
         }
       </div>
       <AppointmentModal 
@@ -279,6 +341,8 @@ export default function Appointments() {
   );
 }
 
+// ... Resto do arquivo (AppointmentModal) permanece igual ...
+// (Atenção: Mantenha a função AppointmentModal que estava no código anterior ou adicione-a aqui se estiver substituindo o arquivo inteiro)
 export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDelete, isSaving }) {
     const { data: patientsList = [] } = useQuery({ queryKey: ['patients_select'], queryFn: async () => { const { data } = await supabase.from('patients').select('id, full_name').order('full_name'); return data || []; }, enabled: !!open });
     const { data: proceduresList = [] } = useQuery({ queryKey: ['procedures_select'], queryFn: async () => { const { data } = await supabase.from('procedures').select('*').order('name'); return data || []; }, enabled: !!open });
@@ -307,9 +371,8 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
         enabled: !!formData.patient_id
     });
 
-    // Filtra pacientes conforme digita
     const filteredPatients = useMemo(() => {
-        if (!patientSearch) return patientsList.slice(0, 10); // Mostra 10 primeiros se vazio
+        if (!patientSearch) return patientsList.slice(0, 10); 
         return patientsList.filter(p => p.full_name.toLowerCase().includes(patientSearch.toLowerCase()));
     }, [patientsList, patientSearch]);
 
@@ -344,7 +407,6 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                 
                 setReturnsList([]);
 
-                // Preencher nome do paciente no input
                 if (initialData.patients) {
                     setPatientSearch(initialData.patients.full_name);
                 } else if (initialPatientId && patientsList.length > 0) {
@@ -365,7 +427,7 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
             setNewReturnNote('');
             setShowPatientList(false);
         }
-    }, [initialData, open, patientsList]); // Adicionado patientsList na dependência para carregar nome
+    }, [initialData, open, patientsList]); 
 
     const toggleConsultationMode = (enabled) => {
         setIsConsultationMode(enabled);
@@ -459,7 +521,6 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
     const handleAddMaterial = (val) => { const m = materialsList.find(x => x.name === val); if (m) setMaterials([...materials, { name: m.name, cost: m.cost_per_unit || 0, quantity: 1 }]); };
     const safeClose = () => { if(typeof onOpenChange === 'function') onOpenChange(false); };
 
-    // Fecha a lista se clicar fora (simples)
     const handleSelectPatient = (patient) => {
         setFormData({...formData, patient_id: patient.id});
         setPatientSearch(patient.full_name);
@@ -485,17 +546,15 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                             value={patientSearch}
                                             onChange={(e) => {
                                                 setPatientSearch(e.target.value);
-                                                setFormData({...formData, patient_id: ''}); // Limpa ID se alterar texto
+                                                setFormData({...formData, patient_id: ''}); 
                                                 setShowPatientList(true);
                                             }}
                                             onFocus={() => setShowPatientList(true)}
                                             className="mt-1"
                                         />
                                         
-                                        {/* Lista Flutuante de Pacientes */}
                                         {showPatientList && (
                                             <>
-                                            {/* Backdrop invisível para fechar ao clicar fora */}
                                             <div className="fixed inset-0 z-40" onClick={() => setShowPatientList(false)}></div>
                                             <div className="absolute z-50 w-full bg-white border border-stone-200 rounded-md shadow-lg mt-1 max-h-60 overflow-y-auto">
                                                 {filteredPatients.length > 0 ? filteredPatients.map(p => (
@@ -553,7 +612,6 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                     <div className="grid grid-cols-5 gap-2 text-[10px] uppercase font-bold text-stone-400 mb-1 px-1"><span className="col-span-3">Nome</span><span className="col-span-2">Valor (R$)</span></div>
                                     
                                     {procedures.map((p, i) => {
-                                        // Se for customizado, o Select mostra 'Outro'. Se não, mostra o nome real.
                                         const isCustom = p.name === 'Outro' || (p.name && p.name.trim() !== '' && !proceduresList.some(item => item.name === p.name));
                                         const selectValue = isCustom ? 'Outro' : p.name;
 
@@ -636,7 +694,6 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                         </div>
                     </ScrollArea>
 
-                    {/* HISTÓRICO RECENTE NA LATERAL */}
                     <div className="w-80 bg-stone-50 border-l border-stone-200 p-6 overflow-y-auto hidden lg:block">
                         <h4 className="font-bold text-stone-500 text-xs uppercase tracking-widest mb-4 flex items-center gap-2"><History className="w-4 h-4"/> Histórico Recente</h4>
                         <div className="space-y-4">
@@ -652,7 +709,6 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                     </div>
                 </div>
 
-                {/* RODAPÉ DO MODAL (SALVAR, CANCELAR, EXCLUIR) */}
                 <div className="p-4 bg-white border-t border-stone-200 flex justify-between items-center z-10">
                     <div>{initialData && onDelete && <Button variant="ghost" onClick={() => onDelete(initialData.id)} className="text-red-500 hover:bg-red-50"><Trash2 className="w-4 h-4 mr-2"/> Excluir</Button>}</div>
                     <div className="flex gap-3"><Button variant="outline" onClick={safeClose}>Cancelar</Button>
