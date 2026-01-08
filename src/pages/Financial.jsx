@@ -83,7 +83,6 @@ export default function Financial() {
   }, [allInstallments, selectedMonth, selectedYear, filterType]);
 
   const totalRevenueFromAppointments = appointments
-    // CORREÇÃO: Agora aceita qualquer status que contenha "Realizado" (Realizado, Realizado Pago, Realizado a Pagar)
     .filter(a => a.status && a.status.includes('Realizado') && isDateInSelectedPeriod(a.date))
     .reduce((sum, a) => {
         const methods = a.payment_methods_json || [];
@@ -104,7 +103,6 @@ export default function Financial() {
   const totalRevenue = totalRevenueFromAppointments + receivedInstallments.reduce((sum, i) => sum + parseAmount(i.value), 0);
 
   const totalMaterialCost = appointments
-      // CORREÇÃO: Inclui custos de todos os realizados (Pago ou não, o material foi gasto)
       .filter(a => a.status && a.status.includes('Realizado') && isDateInSelectedPeriod(a.date))
       .reduce((sum, a) => sum + parseAmount(a.cost_amount), 0);
 
@@ -128,7 +126,6 @@ export default function Financial() {
 
   const paymentStats = useMemo(() => {
     const stats = {};
-    // CORREÇÃO: Filtro abrangente para status Realizado
     const periodAppointments = appointments.filter(a => a.status && a.status.includes('Realizado') && isDateInSelectedPeriod(a.date));
     
     periodAppointments.forEach(app => {
@@ -136,8 +133,15 @@ export default function Financial() {
         methods.forEach(m => {
             const name = m.method || 'Outro';
             if(!stats[name]) stats[name] = { count: 0, total: 0, installmentsCount: 0, creditCount: 0 };
+            
+            // CORREÇÃO: Calcula o valor líquido (pago) considerando o desconto
+            const rawValue = parseAmount(m.value);
+            const discountPercent = parseAmount(m.discount_percent);
+            const paidValue = rawValue - (rawValue * (discountPercent / 100));
+
             stats[name].count += 1;
-            stats[name].total += parseAmount(m.value);
+            stats[name].total += paidValue; // Usa o valor pago, não o bruto
+            
             if(name.includes('Crédito') || name.includes('Parcelamento')) {
                 stats[name].creditCount += 1;
                 stats[name].installmentsCount += Number(m.installments) || 1;
@@ -186,7 +190,6 @@ export default function Financial() {
             type: 'PARCELA'
         });
     });
-    // CORREÇÃO: Inclui pagamentos à vista de todos os status Realizados
     appointments.filter(a => a.status && a.status.includes('Realizado') && isDateInSelectedPeriod(a.date)).forEach(app => {
         const methods = app.payment_methods_json || [];
         methods.forEach((m, idx) => {
@@ -400,7 +403,7 @@ export default function Financial() {
                           <CardContent>
                               <div className="overflow-x-auto">
                                   <table className="w-full text-sm text-left min-w-[300px]">
-                                      <thead className="text-xs text-stone-500 uppercase bg-stone-50"><tr><th className="px-4 py-2">Método</th><th className="px-4 py-2 text-center">Qtd</th><th className="px-4 py-2 text-right">Total</th></tr></thead>
+                                      <thead className="text-xs text-stone-500 uppercase bg-stone-50"><tr><th className="px-4 py-2">Método</th><th className="px-4 py-2 text-center">Qtd</th><th className="px-4 py-2 text-right">Total Pago</th></tr></thead>
                                       <tbody>{paymentStats.map((stat, index) => (<tr key={index} className="border-b border-stone-100 hover:bg-stone-50"><td className="px-4 py-3 font-medium truncate max-w-[150px]">{stat.name}</td><td className="px-4 py-3 text-center">{stat.count}</td><td className="px-4 py-3 text-right">R$ {stat.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td></tr>))}</tbody>
                                   </table>
                               </div>
