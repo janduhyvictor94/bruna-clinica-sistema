@@ -20,15 +20,17 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 
 const COLORS = ['#c4a47c', '#78716c', '#d6d3d1', '#a8a29e', '#57534e', '#44403c'];
 const GENDER_COLORS = { 'Feminino': '#c4a47c', 'Masculino': '#57534e', 'Outro': '#d6d3d1' };
+const CREDIT_METHODS = ['Cartão de Crédito PJ', 'Cartão de Crédito PF'];
 
-// --- FUNÇÃO DE CÁLCULO PARA RELATÓRIO POR PACIENTE (MANTIDA) ---
+// --- FUNÇÃO DE CÁLCULO PARA RELATÓRIO POR PACIENTE ---
 const calculatePatientReport = (patientId, allAppointments, allMovements) => {
     if (!patientId) return null;
 
     const patientAppointments = allAppointments
-        .filter(a => a.patient_id === patientId && a.status === 'Realizado')
+        .filter(a => a.patient_id === patientId && a.status && a.status.includes('Realizado'))
         .sort((a, b) => new Date(b.date) - new Date(a.date));
 
+    // Filtra movimentos vinculados aos agendamentos deste paciente
     const patientMovements = allMovements.filter(m => 
         m.type === 'saida' && m.appointment_id && patientAppointments.some(a => a.id === m.appointment_id)
     );
@@ -97,7 +99,6 @@ const calculatePatientReport = (patientId, allAppointments, allMovements) => {
         patientData: patientAppointments[0]?.patients,
     };
 };
-// --- FIM DA FUNÇÃO ---
 
 
 export default function Reports() {
@@ -106,14 +107,23 @@ export default function Reports() {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedPatientId, setSelectedPatientId] = useState(null);
   
-  // Estados para os Modais de Detalhes
   const [detailModalOpen, setDetailModalOpen] = useState(false);
-  const [detailData, setDetailData] = useState({ title: '', items: [], type: 'transaction' }); // Adicionado 'type'
+  const [detailData, setDetailData] = useState({ title: '', items: [], type: 'transaction' });
   
   // Queries
   const { data: appointments = [] } = useQuery({ queryKey: ['appointments'], queryFn: async () => { const { data } = await supabase.from('appointments').select('*, patients(*)'); return data; } });
   const { data: patients = [] } = useQuery({ queryKey: ['patients'], queryFn: async () => { const { data } = await supabase.from('patients').select('*'); return data; } });
   const { data: stockMovements = [] } = useQuery({ queryKey: ['stock-movements'], queryFn: async () => { const { data } = await supabase.from('stock_movements').select('*'); return data; } });
+  const { data: expenses = [] } = useQuery({ queryKey: ['expenses'], queryFn: async () => { const { data } = await supabase.from('expenses').select('*'); return data; } });
+  // NOVA QUERY: Installments para cálculo de caixa
+  const { data: installments = [] } = useQuery({ 
+      queryKey: ['installments'], 
+      queryFn: async () => { 
+          // Trazemos também o patient_id via appointments para filtrar se necessário
+          const { data } = await supabase.from('installments').select('*, appointments(patient_id)'); 
+          return data; 
+      } 
+  });
 
   const handlePrevMonth = () => { if (selectedMonth === 0) { setSelectedMonth(11); setSelectedYear(selectedYear - 1); } else { setSelectedMonth(selectedMonth - 1); } };
   const handleNextMonth = () => { if (selectedMonth === 11) { setSelectedMonth(0); setSelectedYear(selectedYear + 1); } else { setSelectedMonth(selectedMonth + 1); } };
@@ -125,32 +135,130 @@ export default function Reports() {
   };
   const { start, end } = getDateRange();
 
-  const filteredAppointments = appointments.filter(a => { 
+  // 1. Filtra agendamentos por data e status (para contagem e gráficos gerais)
+  const filteredAppointments = useMemo(() => {
+    return appointments.filter(a => { 
       if(!a.date) return false;
       const date = new Date(a.date + 'T00:00:00'); 
-      return isWithinInterval(date, { start, end }) && a.status === 'Realizado'; 
-  });
+      return isWithinInterval(date, { start, end }) && a.status && a.status.includes('Realizado'); 
+    });
+  }, [appointments, start, end]);
   
-  const patientFiltered = selectedPatientId ? filteredAppointments.filter(a => a.patient_id === selectedPatientId) : filteredAppointments;
+  // 2. Filtra por paciente
+  const patientFiltered = useMemo(() => {
+      return selectedPatientId 
+        ? filteredAppointments.filter(a => a.patient_id === selectedPatientId) 
+        : filteredAppointments;
+  }, [selectedPatientId, filteredAppointments]);
 
   const patientReport = useMemo(() => {
     return calculatePatientReport(selectedPatientId, appointments, stockMovements);
   }, [selectedPatientId, appointments, stockMovements]);
 
 
-  // --- ESTATÍSTICAS GERAIS ---
+  // --- CÁLCULO DE RECEITA (REGIME DE CAIXA - IGUAL DASHBOARD) ---
+  const revenueCalculations = useMemo(() => {
+      // A. Recebimentos à vista (Entrada imediata nos agendamentos do período)
+      // Agendamentos devem estar no período E ter status Realizado
+      // Se houver paciente selecionado, filtra por ele.
+      const cashAppointments = appointments.filter(a => {
+          const date = new Date(a.date + 'T00:00:00');
+          const isDateIn = isWithinInterval(date, { start, end });
+          const isRealized = a.status && a.status.includes('Realizado');
+          const isPatientMatch = selectedPatientId ? a.patient_id === selectedPatientId : true;
+          return isDateIn && isRealized && isPatientMatch;
+      });
+
+      const cashFromAppointments = cashAppointments.reduce((sum, appt) => {
+          const methods = appt.payment_methods_json || [];
+          // Soma apenas o que NÃO gera parcela (Dinheiro, Pix, Débito...)
+          // Crédito e Agendamento vão para a tabela installments
+          const cashPart = methods
+              .filter(m => {
+                  const method = m.method || '';
+                  const isInstallmentStarter = CREDIT_METHODS.includes(method) || method === 'Agendamento de Pagamento';
+                  return !isInstallmentStarter;
+              })
+              .reduce((s, m) => {
+                  const rawValue = Number(m.value) || 0;
+                  const discPercent = Number(m.discount_percent) || 0;
+                  return s + (rawValue - (rawValue * (discPercent / 100)));
+              }, 0);
+          return sum + cashPart;
+      }, 0);
+
+      // B. Recebimentos de Parcelas (Tabela installments)
+      // Parcelas onde 'received_date' cai no período
+      const receivedInstallments = installments.filter(i => {
+          if (!i.is_received || !i.received_date) return false;
+          const rDate = parseISO(i.received_date);
+          const isDateIn = isWithinInterval(rDate, { start, end });
+          
+          // Filtro de Paciente nas Parcelas
+          let isPatientMatch = true;
+          if (selectedPatientId) {
+             // Tenta pegar do join ou, se não tiver, tenta achar o agendamento pai na lista de appointments
+             const parentAppt = i.appointments || appointments.find(a => a.id === i.appointment_id);
+             if (parentAppt && parentAppt.patient_id !== selectedPatientId) {
+                 isPatientMatch = false;
+             }
+          }
+
+          return isDateIn && isPatientMatch;
+      });
+
+      const cashFromInstallments = receivedInstallments.reduce((sum, i) => sum + (Number(i.value) || 0), 0);
+
+      return cashFromAppointments + cashFromInstallments;
+
+  }, [appointments, installments, start, end, selectedPatientId]);
+
+
+  // --- MOVIMENTAÇÕES DE ESTOQUE ---
+  const filteredMovements = useMemo(() => {
+      return stockMovements.filter(m => { 
+        const date = new Date(m.date); 
+        const inPeriod = isWithinInterval(date, { start, end }) && m.type === 'saida';
+        if (!inPeriod) return false;
+
+        if (m.appointment_id) {
+            const parentAppt = appointments.find(a => a.id === m.appointment_id);
+            if (!parentAppt || !parentAppt.status || !parentAppt.status.includes('Realizado')) {
+                return false; 
+            }
+            if (selectedPatientId && parentAppt.patient_id !== selectedPatientId) {
+                return false;
+            }
+        } else if (selectedPatientId) {
+            return false;
+        }
+        return true; 
+    });
+  }, [stockMovements, appointments, start, end, selectedPatientId]);
+
+
+  // --- TOTAIS GERAIS ---
   const newPatients = patientFiltered.filter(a => a.type === 'Novo').length; 
   const returningPatients = patientFiltered.filter(a => a.type === 'Recorrente').length;
   
-  const filteredMovements = stockMovements.filter(m => { const date = new Date(m.date); return isWithinInterval(date, { start, end }) && m.type === 'saida'; });
+  // Custo Variável
   const totalMaterialCost = filteredMovements.reduce((sum, m) => sum + (Number(m.total_cost) || 0), 0);
   
-  const totalRevenue = patientFiltered.reduce((sum, a) => sum + (Number(a.total_amount) || 0), 0);
-  const totalProfit = totalRevenue - totalMaterialCost;
+  // Receita (Agora via Regime de Caixa)
+  const totalRevenue = revenueCalculations;
 
-  // --- CÁLCULOS AVANÇADOS (PROCEDIMENTOS E MATERIAIS) ---
-  
-  // 3. Procedimentos Stats (Adicionando o agrupamento por paciente nos detalhes)
+  // Despesas Operacionais (Fixo)
+  const filteredExpenses = expenses.filter(e => {
+      if(!e.due_date || !e.is_paid) return false;
+      const date = parseISO(e.due_date);
+      return isWithinInterval(date, { start, end });
+  });
+  const totalOperatingExpenses = selectedPatientId ? 0 : filteredExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+  // Lucro Líquido
+  const totalProfit = totalRevenue - totalMaterialCost - totalOperatingExpenses;
+
+  // --- CÁLCULOS AVANÇADOS ---
   const procedureStats = useMemo(() => {
       const stats = {};
       patientFiltered.forEach(a => {
@@ -160,13 +268,11 @@ export default function Reports() {
                   if (!stats[pName]) stats[pName] = { count: 0, revenue: 0, cost: 0, details: [] };
                   stats[pName].count++;
                   stats[pName].revenue += Number(p.value) || 0;
-                  
-                  // Detalhe por Transação (Data e Valor)
                   stats[pName].details.push({ 
                     date: a.date, 
                     patient: a.patients?.full_name, 
-                    patient_id: a.patient_id, // Adicionado ID
-                    value: p.value 
+                    patient_id: a.patient_id,
+                    value: Number(p.value) || 0
                   });
               });
           }
@@ -174,27 +280,24 @@ export default function Reports() {
       return Object.entries(stats).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.count - a.count);
   }, [patientFiltered]);
 
-  // 4. Materiais Stats (Adicionando o agrupamento por paciente nos detalhes)
   const materialStats = useMemo(() => {
       const stats = {};
       filteredMovements.forEach(m => {
           const mName = m.material_name || 'Outro';
           if (!stats[mName]) stats[mName] = { quantity: 0, cost: 0, details: [] };
-          stats[mName].quantity += m.quantity || 0;
-          stats[mName].cost += m.total_cost || 0;
-          
-          // Detalhe por Transação (Data e Quantidade)
+          stats[mName].quantity += Number(m.quantity) || 0;
+          stats[mName].cost += Number(m.total_cost) || 0;
           stats[mName].details.push({ 
             date: m.date, 
             patient: m.patient_name, 
-            patient_id: m.appointment_id ? appointments.find(a => a.id === m.appointment_id)?.patient_id : null, // Obtém ID do paciente
-            quantity: m.quantity 
+            patient_id: m.appointment_id ? appointments.find(a => a.id === m.appointment_id)?.patient_id : null,
+            quantity: Number(m.quantity) || 0,
+            value: Number(m.total_cost) || 0 
           });
       });
       return Object.entries(stats).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.cost - a.cost);
   }, [filteredMovements, appointments]);
 
-  // Função auxiliar para calcular o ranking de pacientes (Comum para Proc. e Mat.)
   const getPatientRanking = (details) => {
     const patientCounts = {};
     details.forEach(item => {
@@ -207,13 +310,9 @@ export default function Reports() {
             if (item.quantity) patientCounts[item.patient_id].totalQuantity += Number(item.quantity);
         }
     });
-
-    return Object.values(patientCounts)
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 10); // Limita ao Top 10
+    return Object.values(patientCounts).sort((a, b) => b.count - a.count).slice(0, 10);
   };
   
-  // Função auxiliar para modais (MODIFICADA)
   const openDetails = (title, items, type = 'transaction') => {
       setDetailData({ title, items, type });
       setDetailModalOpen(true);
@@ -222,20 +321,17 @@ export default function Reports() {
   const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
   const years = Array.from({ length: 21 }, (_, i) => new Date().getFullYear() - 10 + i);
 
-  // --- RESTANTE DOS CÁLCULOS GERAIS (Gênero e Canal) ---
-  const genderStats = useMemo(() => {/* ... (mantido) ... */
+  // --- GRÁFICOS ---
+  const genderStats = useMemo(() => {
       const counts = {};
       const revenue = {};
-      
       patientFiltered.forEach(app => {
           const gender = app.patients?.gender || 'Não informado';
           counts[gender] = (counts[gender] || 0) + 1;
           revenue[gender] = (revenue[gender] || 0) + (Number(app.total_amount) || 0);
       });
-
       const countData = Object.entries(counts).map(([name, value]) => ({ name, value }));
       const revenueData = Object.entries(revenue).map(([name, value]) => ({ name, value }));
-      
       let maxRevenue = -1;
       let maxRevenueGender = 'N/A';
       revenueData.forEach(item => {
@@ -244,24 +340,20 @@ export default function Reports() {
               maxRevenueGender = item.name;
           }
       });
-
       return { countData, revenueData, maxRevenueGender, maxRevenue };
   }, [patientFiltered]);
   
-  const channelStats = useMemo(() => {/* ... (mantido) ... */
+  const channelStats = useMemo(() => {
       const counts = {};
       patientFiltered.forEach(app => {
           const origin = app.patients?.origin || 'Outro';
           counts[origin] = (counts[origin] || 0) + 1;
       });
       const data = Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
-      
       const bestChannel = data.length > 0 ? data[0].name : 'N/A';
       const bestChannelCount = data.length > 0 ? data[0].value : 0;
-
       return { data, bestChannel, bestChannelCount };
   }, [patientFiltered]);
-  // --- FIM DOS CÁLCULOS GERAIS ---
 
   return (
     <div className="space-y-6">
@@ -300,7 +392,17 @@ export default function Reports() {
             </div>
 
             <div className="w-full sm:w-1/4">
-                 <StatCard title="Lucro" value={`R$ ${totalProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} icon={TrendingUp} />
+                 <StatCard 
+                    title="Lucro Líquido (Caixa)" 
+                    value={`R$ ${totalProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
+                    icon={TrendingUp} 
+                    className={totalProfit >= 0 ? "bg-emerald-50 border-emerald-200" : "bg-rose-50 border-rose-200"}
+                 />
+                 {!selectedPatientId && totalOperatingExpenses > 0 && (
+                     <p className="text-xs text-stone-500 mt-1 ml-1">
+                        (Deduzido R$ {totalOperatingExpenses.toLocaleString('pt-BR', {minimumFractionDigits: 2})} de despesas fixas)
+                     </p>
+                 )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -379,7 +481,7 @@ export default function Reports() {
                                 <th className="px-4 py-2 text-left">Procedimento</th>
                                 <th className="px-4 py-2 text-center">Qtd</th>
                                 <th className="px-4 py-2 text-right">Faturamento</th>
-                                <th className="px-4 py-2 text-right">Lucro</th>
+                                <th className="px-4 py-2 text-right">Lucro (Bruto)</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -469,7 +571,7 @@ export default function Reports() {
                                         <div key={appt.id} className="p-3 border border-stone-200 rounded-lg bg-stone-50 hover:bg-white shadow-sm transition-colors">
                                             <div className="flex justify-between items-start mb-1">
                                                 <div className="flex items-center gap-2">
-                                                    <CheckCircle2 className={`w-4 h-4 ${appt.status === 'Realizado' ? 'text-emerald-500' : 'text-stone-400'}`} />
+                                                    <CheckCircle2 className={`w-4 h-4 ${appt.status.includes('Realizado') ? 'text-emerald-500' : 'text-stone-400'}`} />
                                                     <span className="text-sm font-bold text-stone-800">{format(parseISO(appt.date), 'dd/MM/yyyy')}</span>
                                                 </div>
                                                 <span className="font-bold text-sm text-blue-600">R$ {appt.total_amount?.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</span>
@@ -497,7 +599,7 @@ export default function Reports() {
                 <CardHeader className="p-4 bg-stone-50 border-b border-stone-100"><CardTitle className="flex items-center gap-2"><Syringe className="w-4 h-4"/> Performance Detalhada</CardTitle></CardHeader>
                 <CardContent className="p-0">
                     <table className="w-full text-sm text-left">
-                        <thead className="text-xs text-stone-500 uppercase bg-stone-50"><tr><th className="px-4 py-3">Nome</th><th className="px-4 py-3 text-center">Qtd</th><th className="px-4 py-3 text-right">Faturamento</th><th className="px-4 py-3 text-right">Lucro</th><th className="px-4 py-3 text-center">Ação</th></tr></thead>
+                        <thead className="text-xs text-stone-500 uppercase bg-stone-50"><tr><th className="px-4 py-3">Nome</th><th className="px-4 py-3 text-center">Qtd</th><th className="px-4 py-3 text-right">Faturamento</th><th className="px-4 py-3 text-right">Lucro (Bruto)</th><th className="px-4 py-3 text-center">Ação</th></tr></thead>
                         <tbody className="divide-y divide-stone-100">
                             {procedureStats.map((proc, i) => (
                                 <tr key={i} className="hover:bg-stone-50">
@@ -554,7 +656,6 @@ export default function Reports() {
         </TabsContent>
       </Tabs>
 
-      {/* Modal de Detalhes Genérico (MODIFICADO) */}
       <Dialog open={detailModalOpen} onOpenChange={setDetailModalOpen}>
         <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
             <DialogHeader>
@@ -566,7 +667,6 @@ export default function Reports() {
             <div className="space-y-2 mt-2">
                 {detailData.items.length === 0 && <p className="text-center text-stone-400 py-4">Nenhum registro encontrado.</p>}
 
-                {/* Exibição de Ranking de Pacientes */}
                 {detailData.type === 'ranking' && (
                     <table className="w-full text-sm">
                         <thead className="text-xs text-stone-500 uppercase bg-stone-50">
@@ -592,7 +692,6 @@ export default function Reports() {
                     </table>
                 )}
 
-                {/* Exibição de Transações Detalhadas (Original) */}
                 {detailData.type === 'transaction' && detailData.items.map((item, idx) => (
                     <div key={idx} className="p-2 border border-stone-100 rounded bg-stone-50 flex justify-between items-center text-sm">
                         <div>

@@ -223,7 +223,11 @@ export default function Dashboard() {
     const currentMonthStart = startOfMonth(today);
     const currentMonthEnd = endOfMonth(today);
 
-    const monthAppts = appointments.filter(a => { const d = parseISO(a.date); return isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd }) && a.status === 'Realizado'; });
+    // CORREÇÃO: Filtra status que contêm "Realizado"
+    const monthAppts = appointments.filter(a => { 
+        const d = parseISO(a.date); 
+        return isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd }) && a.status && a.status.includes('Realizado'); 
+    });
     
     // CORREÇÃO AQUI: Filtra despesas do mês que estão PAGAS (is_paid === true)
     const monthExps = expenses.filter(e => { 
@@ -283,7 +287,8 @@ export default function Dashboard() {
     const processedRecovery = new Set();
     const sortedAppts = [...appointments].sort((a, b) => new Date(b.date) - new Date(a.date));
     sortedAppts.forEach(appt => {
-        if (!processedRecovery.has(appt.patient_id) && appt.status === 'Realizado') {
+        // CORREÇÃO: Inclui Realizado Pago na recuperação
+        if (!processedRecovery.has(appt.patient_id) && appt.status && appt.status.includes('Realizado')) {
             const procs = appt.procedures_json || [];
             const hasBotox = procs.some(p => p.name?.toLowerCase().includes('botox') || p.name?.toLowerCase().includes('toxina'));
             const hasFiller = procs.some(p => p.name?.toLowerCase().includes('preenchimento') || p.name?.toLowerCase().includes('harmonização'));

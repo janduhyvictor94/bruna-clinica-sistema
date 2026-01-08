@@ -16,7 +16,7 @@ import {
   Plus, Edit2, Trash2, DollarSign, TrendingUp, TrendingDown, 
   CheckCircle2, CreditCard, ChevronLeft, ChevronRight, Filter, Calendar as CalendarIcon, ArrowDownCircle, ArrowUpCircle 
 } from 'lucide-react';
-import { format, isWithinInterval, parseISO, getMonth, getYear } from 'date-fns';
+import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -83,7 +83,8 @@ export default function Financial() {
   }, [allInstallments, selectedMonth, selectedYear, filterType]);
 
   const totalRevenueFromAppointments = appointments
-    .filter(a => a.status === 'Realizado' && isDateInSelectedPeriod(a.date))
+    // CORREÇÃO: Agora aceita qualquer status que contenha "Realizado" (Realizado, Realizado Pago, Realizado a Pagar)
+    .filter(a => a.status && a.status.includes('Realizado') && isDateInSelectedPeriod(a.date))
     .reduce((sum, a) => {
         const methods = a.payment_methods_json || [];
         const cashPart = methods
@@ -103,7 +104,8 @@ export default function Financial() {
   const totalRevenue = totalRevenueFromAppointments + receivedInstallments.reduce((sum, i) => sum + parseAmount(i.value), 0);
 
   const totalMaterialCost = appointments
-      .filter(a => a.status === 'Realizado' && isDateInSelectedPeriod(a.date))
+      // CORREÇÃO: Inclui custos de todos os realizados (Pago ou não, o material foi gasto)
+      .filter(a => a.status && a.status.includes('Realizado') && isDateInSelectedPeriod(a.date))
       .reduce((sum, a) => sum + parseAmount(a.cost_amount), 0);
 
   const expensesList = expenses.filter(e => isDateInSelectedPeriod(e.due_date));
@@ -126,7 +128,8 @@ export default function Financial() {
 
   const paymentStats = useMemo(() => {
     const stats = {};
-    const periodAppointments = appointments.filter(a => a.status === 'Realizado' && isDateInSelectedPeriod(a.date));
+    // CORREÇÃO: Filtro abrangente para status Realizado
+    const periodAppointments = appointments.filter(a => a.status && a.status.includes('Realizado') && isDateInSelectedPeriod(a.date));
     
     periodAppointments.forEach(app => {
         const methods = app.payment_methods_json || [];
@@ -183,7 +186,8 @@ export default function Financial() {
             type: 'PARCELA'
         });
     });
-    appointments.filter(a => a.status === 'Realizado' && isDateInSelectedPeriod(a.date)).forEach(app => {
+    // CORREÇÃO: Inclui pagamentos à vista de todos os status Realizados
+    appointments.filter(a => a.status && a.status.includes('Realizado') && isDateInSelectedPeriod(a.date)).forEach(app => {
         const methods = app.payment_methods_json || [];
         methods.forEach((m, idx) => {
             const method = m.method || '';

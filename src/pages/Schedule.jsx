@@ -308,7 +308,7 @@ export default function Schedule() {
               {/* LEGENDA DE CORES DEFINITIVA */}
               <div className="p-4 border-t border-stone-100 bg-stone-50/50 text-[10px] grid grid-cols-2 gap-2">
                   <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-100 border-l-2 border-blue-500"></div><span className="text-stone-600">Novo (Agendado)</span></div>
-                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-100 border-l-2 border-purple-500"></div><span className="text-stone-600">Retorno (Agendado)</span></div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-100 border-l-2 border-purple-500"></div><span className="text-stone-600">Recorrente Agendado</span></div>
                   <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-lime-100 border-l-2 border-lime-500"></div><span className="text-stone-600">Confirmado</span></div>
                   <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-emerald-100 border-l-2 border-emerald-600"></div><span className="text-stone-600">Realizado (Pago)</span></div>
                   <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-orange-100 border-l-2 border-orange-500"></div><span className="text-stone-600">Realizado (A Pagar)</span></div>
