@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { supabase } from '../supabase';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '@/components/ui/PageHeader';
@@ -9,22 +9,24 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Plus, Calendar, User, FileText, ChevronDown, ChevronUp, History, CreditCard, X, Trash2, Syringe, Package, Stethoscope, Check, Filter, Phone } from 'lucide-react';
+import { Search, Plus, Calendar, User, FileText, ChevronDown, ChevronUp, History, CreditCard, X, Trash2, Syringe, Package, Check, Filter, Phone } from 'lucide-react';
 import { toast } from 'sonner';
-import { format, parseISO, addMonths, addDays } from 'date-fns';
+import { format, parseISO, addMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
-// ATUALIZAÇÃO: Status renomeado para "Realizado"
 const STATUS_OPTIONS = [
   'Agendado', 
   'Confirmado', 
-  'Realizado', // Antigo "Realizado Pagamento em Atendimento"
+  'Realizado', 
   'Realizado Pago', 
   'Realizado a Pagar', 
-  'Cancelado'
+  'Realizado (Em Andamento)', 
+  'Desmarcado',               
+  'Não Compareceu'            
 ];
 
 const TYPE_OPTIONS = ['Novo', 'Recorrente'];
@@ -37,6 +39,21 @@ const PAYMENT_METHOD_OPTIONS = [
 
 const DISCOUNT_ALLOWED_METHODS = ['Dinheiro', 'Pix PF', 'Pix PJ', 'Débito PJ', 'Débito PF'];
 const CREDIT_METHODS = ['Cartão de Crédito PJ', 'Cartão de Crédito PF'];
+
+// Lógica de Cores (Mesma da Agenda)
+const getStatusBadgeStyle = (status) => {
+    if (status === 'Não Compareceu' || status === 'Cancelado') return 'bg-red-50 text-red-700 border-red-200';
+    if (status === 'Desmarcado') return 'bg-stone-100 text-stone-700 border-stone-300';
+    
+    if (status === 'Realizado Pago') return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+    if (status === 'Realizado a Pagar') return 'bg-orange-100 text-orange-700 border-orange-200';
+    if (status === 'Realizado (Em Andamento)') return 'bg-indigo-100 text-indigo-700 border-indigo-200';
+    if (status === 'Realizado') return 'bg-cyan-100 text-cyan-700 border-cyan-200';
+    
+    if (status === 'Confirmado') return 'bg-lime-100 text-lime-800 border-lime-200';
+    
+    return 'bg-stone-800 text-white'; 
+};
 
 export default function Appointments() {
   const [search, setSearch] = useState('');
@@ -89,6 +106,7 @@ export default function Appointments() {
             patient_id: rawData.patient_id,
             date: rawData.date,
             time: rawData.time,
+            end_time: rawData.end_time, // Salva o horário final
             status: rawData.status,
             type: rawData.type,
             service_type_custom: rawData.service_type_custom,
@@ -119,6 +137,7 @@ export default function Appointments() {
 
         const apptId = Number(appointmentId);
         
+        // Se for Realizado (qualquer variação), processa estoque e parcelas
         if (payload.status.includes('Realizado')) {
             await supabase.from('stock_movements').delete().eq('appointment_id', apptId);
             await supabase.from('installments').delete().eq('appointment_id', apptId);
@@ -166,7 +185,7 @@ export default function Appointments() {
                     
                     if (isScheduled) {
                         if (!pm.scheduled_date) {
-                            throw new Error(`Selecione a data de vencimento para o Agendamento de Pagamento de R$ ${totalVal.toFixed(2).replace('.', ',')}.`);
+                            throw new Error(`Selecione a data de vencimento para o Agendamento de Pagamento.`);
                         }
                         
                         installmentsPayload.push({
@@ -276,7 +295,6 @@ export default function Appointments() {
                         <div className="w-12 h-12 rounded-full bg-stone-100 flex items-center justify-center text-stone-600 font-serif font-bold text-lg border border-stone-200">{group.patient?.full_name?.charAt(0).toUpperCase()}</div>
                         <div>
                             <h3 className="font-bold text-stone-800 text-lg">{group.patient?.full_name}</h3>
-                            {/* ATUALIZAÇÃO: Exibição do WhatsApp */}
                             {group.patient?.phone && (
                                 <div className="flex items-center gap-1.5 mt-0.5">
                                     <Phone className="w-3 h-3 text-stone-400" />
@@ -295,7 +313,13 @@ export default function Appointments() {
                         {group.history.map(app => (
                             <div key={app.id} className="bg-white border border-stone-200 rounded-xl p-4 flex flex-col md:flex-row justify-between items-center gap-4 hover:border-border-300">
                                 <div className="flex items-center gap-4 flex-1 w-full"><Badge variant="outline" className={`w-24 justify-center ${app.type === 'Recorrente' ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-700'}`}>{app.type}</Badge><div><div className="flex items-center gap-2 mb-1"><Calendar className="w-4 h-4 text-stone-400"/><span className="text-sm font-bold text-stone-800">{format(parseISO(app.date), "dd 'de' MMM, yyyy", { locale: ptBR })}</span></div><p className="text-xs text-stone-500 line-clamp-1">{app.service_type_custom ? <strong>{app.service_type_custom} - </strong> : ''}{app.notes || 'Sem observações'}</p></div></div>
-                                <div className="flex items-center gap-4"><Badge className="bg-stone-800">{app.status}</Badge><span className="text-sm font-bold text-stone-700 min-w-[80px] text-right">R$ {app.total_amount?.toFixed(2)}</span><Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); setEditingAppointment(app); setIsModalOpen(true); }}><FileText className="w-4 h-4 text-stone-500"/></Button></div>
+                                <div className="flex items-center gap-4">
+                                    {/* BADGE COM CORES PERSONALIZADAS */}
+                                    <Badge className={`${getStatusBadgeStyle(app.status)} border px-2 py-0.5 whitespace-nowrap`}>
+                                        {app.status}
+                                    </Badge>
+                                    <span className="text-sm font-bold text-stone-700 min-w-[80px] text-right">R$ {app.total_amount?.toFixed(2)}</span><Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); setEditingAppointment(app); setIsModalOpen(true); }}><FileText className="w-4 h-4 text-stone-500"/></Button>
+                                </div>
                             </div>
                         ))}
                     </div>
@@ -322,11 +346,12 @@ export default function Appointments() {
 }
 
 export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDelete, isSaving }) {
-    const { data: patientsList = [] } = useQuery({ queryKey: ['patients_select'], queryFn: async () => { const { data } = await supabase.from('patients').select('id, full_name').order('full_name'); return data || []; }, enabled: !!open });
+    // Busca Whatsapp e Phone do paciente
+    const { data: patientsList = [] } = useQuery({ queryKey: ['patients_select'], queryFn: async () => { const { data } = await supabase.from('patients').select('id, full_name, phone, whatsapp').order('full_name'); return data || []; }, enabled: !!open });
     const { data: proceduresList = [] } = useQuery({ queryKey: ['procedures_select'], queryFn: async () => { const { data } = await supabase.from('procedures').select('*').order('name'); return data || []; }, enabled: !!open });
     const { data: materialsList = [] } = useQuery({ queryKey: ['materials_select'], queryFn: async () => { const { data } = await supabase.from('materials').select('*').order('name'); return data || []; }, enabled: !!open });
 
-    const [formData, setFormData] = useState({ patient_id: '', date: '', time: '', status: 'Agendado', type: 'Novo', service_type_custom: '', notes: '' });
+    const [formData, setFormData] = useState({ patient_id: '', date: '', time: '', end_time: '', status: 'Agendado', type: 'Novo', service_type_custom: '', notes: '' });
     const [procedures, setProcedures] = useState([{ name: '', value: 0 }]);
     const [materials, setMaterials] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState([]);
@@ -334,10 +359,13 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
     const [newReturnDate, setNewReturnDate] = useState('');
     const [newReturnNote, setNewReturnNote] = useState('');
     
+    // ESTADOS PARA CONSULTA (Alterado)
+    const [includeConsultation, setIncludeConsultation] = useState(false);
+    const [consultationValue, setConsultationValue] = useState(0);
+
     // STATES PARA CAMPO DE BUSCA DE PACIENTE
     const [patientSearch, setPatientSearch] = useState('');
     const [showPatientList, setShowPatientList] = useState(false);
-    const [isConsultationMode, setIsConsultationMode] = useState(false);
 
     const { data: patientHistory = [] } = useQuery({
         queryKey: ['patient_history_sidebar', formData.patient_id],
@@ -354,6 +382,10 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
         return patientsList.filter(p => p.full_name.toLowerCase().includes(patientSearch.toLowerCase()));
     }, [patientsList, patientSearch]);
 
+    const selectedPatient = useMemo(() => {
+        return patientsList.find(p => p.id === formData.patient_id);
+    }, [patientsList, formData.patient_id]);
+
     useEffect(() => {
         if (open) {
             if (initialData) {
@@ -363,19 +395,27 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                     patient_id: isNaN(initialPatientId) ? '' : initialPatientId,
                     date: initialData.date || format(new Date(), 'yyyy-MM-dd'),
                     time: initialData.time || '',
+                    end_time: initialData.end_time || '',
                     status: initialData.status || 'Agendado',
                     type: initialData.type || 'Recorrente',
                     service_type_custom: initialData.service_type_custom || '',
                     notes: initialData.notes || ''
                 });
                 
-                const loadedProcedures = Array.isArray(initialData.procedures_json) ? initialData.procedures_json : [{ name: '', value: 0 }];
-                if (loadedProcedures.length === 1 && loadedProcedures[0].name === 'Consulta') {
-                    setIsConsultationMode(true);
+                // Separa os procedimentos normais da "Consulta" se ela existir no array salvo
+                const loadedProcedures = Array.isArray(initialData.procedures_json) ? initialData.procedures_json : [];
+                const consultationItem = loadedProcedures.find(p => p.name === 'Consulta');
+                const otherProcedures = loadedProcedures.filter(p => p.name !== 'Consulta');
+
+                if (consultationItem) {
+                    setIncludeConsultation(true);
+                    setConsultationValue(consultationItem.value || 0);
                 } else {
-                    setIsConsultationMode(false);
+                    setIncludeConsultation(false);
+                    setConsultationValue(0);
                 }
-                setProcedures(loadedProcedures);
+
+                setProcedures(otherProcedures.length > 0 ? otherProcedures : [{ name: '', value: 0 }]);
                 
                 const loadedMaterials = Array.isArray(initialData.materials_json) ? initialData.materials_json.map(m => ({...m, quantity: m.quantity || 1})) : [];
                 setMaterials(loadedMaterials);
@@ -393,12 +433,13 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                 }
 
             } else {
-                setFormData({ patient_id: '', date: format(new Date(), 'yyyy-MM-dd'), time: '', status: 'Agendado', type: 'Novo', service_type_custom: '', notes: '' });
+                setFormData({ patient_id: '', date: format(new Date(), 'yyyy-MM-dd'), time: '', end_time: '', status: 'Agendado', type: 'Novo', service_type_custom: '', notes: '' });
                 setProcedures([{ name: '', value: 0 }]);
+                setIncludeConsultation(false);
+                setConsultationValue(0);
                 setMaterials([]);
                 setPaymentMethods([]);
                 setReturnsList([]);
-                setIsConsultationMode(false);
                 setPatientSearch('');
             }
             setNewReturnDate('');
@@ -406,13 +447,6 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
             setShowPatientList(false);
         }
     }, [initialData, open, patientsList]); 
-
-    const toggleConsultationMode = (enabled) => {
-        setIsConsultationMode(enabled);
-        if (enabled) {
-            setProcedures([{ name: 'Consulta', value: 0 }]);
-        }
-    };
 
     const formatMoneyDisplay = (value) => {
         if (value === undefined || value === null) return '';
@@ -425,11 +459,20 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
         if (list) { const newList = [...list]; newList[index][field] = floatValue; setter(newList); } else { setter(floatValue); }
     };
 
+    const handleConsultationValueChange = (value) => {
+        const rawValue = value.replace(/\D/g, ""); 
+        setConsultationValue(Number(rawValue) / 100);
+    };
+
     const financials = useMemo(() => {
-        const totalService = procedures.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
+        const totalProcedures = procedures.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
+        // Soma a consulta se estiver marcada
+        const consultVal = includeConsultation ? (Number(consultationValue) || 0) : 0;
+        const totalService = totalProcedures + consultVal;
+
         const totalMaterials = materials.reduce((acc, curr) => acc + ((Number(curr.cost) || 0) * (Number(curr.quantity) || 1)), 0);
-        let totalPaidReal = 0;
         
+        let totalPaidReal = 0;
         paymentMethods.forEach(pm => {
             const isCreditCard = CREDIT_METHODS.includes(pm.method);
             const isScheduled = pm.method === 'Agendamento de Pagamento';
@@ -444,7 +487,7 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
         
         const profit = totalPaidReal - totalMaterials;
         return { totalService, totalMaterials, totalPaidReal, profit };
-    }, [procedures, materials, paymentMethods]);
+    }, [procedures, materials, paymentMethods, includeConsultation, consultationValue]);
 
     const handleSubmit = () => {
         if (!formData.patient_id) return toast.error("Selecione um paciente.");
@@ -456,13 +499,35 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
             return toast.error("A data de Vencimento é obrigatória para Agendamento de Pagamento.");
         }
 
+        let finalPaymentMethods = [...paymentMethods];
+        
+        // Se houver valor mas nenhum pagamento, lança dinheiro por padrão
+        if (financials.totalService > 0 && finalPaymentMethods.length === 0) {
+             finalPaymentMethods = [{
+                method: 'Dinheiro',
+                value: financials.totalService,
+                installments: 1,
+                discount_percent: 0,
+                scheduled_date: ''
+            }];
+            toast.info("Pagamento lançado automaticamente (Dinheiro) para contabilização.");
+        }
+
+        // Reconstrói a lista de procedimentos incluindo a consulta se estiver marcada
+        // Filtra procedimentos vazios para não sujar o banco
+        let finalProcedures = procedures.filter(p => p.name.trim() !== '' || p.value > 0);
+        
+        if (includeConsultation) {
+            finalProcedures.push({ name: 'Consulta', value: Number(consultationValue) });
+        }
+
         onSave({
             ...formData,
             id: initialData?.id,
             patient_name_ref: patientName,
-            procedures_json: procedures,
+            procedures_json: finalProcedures, // Envia lista unificada
             materials_json: materials,
-            payment_methods: paymentMethods,
+            payment_methods: finalPaymentMethods,
             total_amount: financials.totalService, 
             cost_amount: financials.totalMaterials,
             profit_amount: financials.profit, 
@@ -475,7 +540,6 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
     const handleAddPayment = () => { setPaymentMethods([...paymentMethods, { method: 'Pix PF', value: 0, installments: 1, discount_percent: 0, scheduled_date: '' }]); };
     const updatePayment = (index, field, value) => { 
         const newMethods = [...paymentMethods]; 
-        
         if (field === 'method' && value === 'Agendamento de Pagamento') {
              newMethods[index]['installments'] = 1; 
              const initialDate = format(new Date(), 'yyyy-MM-dd');
@@ -483,19 +547,11 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
         } else if (field === 'method' && !CREDIT_METHODS.includes(value)) {
             newMethods[index]['installments'] = 1; 
         }
-        
         newMethods[index][field] = value; 
         setPaymentMethods(newMethods); 
     };
     const removePayment = (index) => { setPaymentMethods(paymentMethods.filter((_, i) => i !== index)); };
     
-    const handleSelectProcedure = (index, procName) => {
-        const selected = proceduresList.find(p => p.name === procName);
-        const newProcs = [...procedures]; newProcs[index].name = procName; 
-        if (selected) newProcs[index].value = selected.default_price || 0;
-        setProcedures(newProcs);
-    };
-
     const handleAddMaterial = (val) => { const m = materialsList.find(x => x.name === val); if (m) setMaterials([...materials, { name: m.name, cost: m.cost_per_unit || 0, quantity: 1 }]); };
     const safeClose = () => { if(typeof onOpenChange === 'function') onOpenChange(false); };
 
@@ -503,6 +559,27 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
         setFormData({...formData, patient_id: patient.id});
         setPatientSearch(patient.full_name);
         setShowPatientList(false);
+    };
+
+    const handleDisplayProcMoneyChange = (value, index) => {
+        const rawValue = value.replace(/\D/g, ""); 
+        const floatValue = Number(rawValue) / 100;
+        const newList = [...procedures];
+        newList[index].value = floatValue;
+        setProcedures(newList);
+    };
+
+    const handleDisplayProcSelect = (index, procName) => {
+        const selected = proceduresList.find(p => p.name === procName);
+        const newList = [...procedures];
+        newList[index].name = procName;
+        if(selected) newList[index].value = selected.default_price || 0;
+        setProcedures(newList);
+    };
+
+    const removeDisplayProc = (index) => {
+        const newList = procedures.filter((_, ix) => ix !== index);
+        setProcedures(newList);
     };
 
     return (
@@ -531,6 +608,16 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                             className="mt-1"
                                         />
                                         
+                                        {/* WHATSAPP DO PACIENTE */}
+                                        {selectedPatient && (
+                                            <div className="flex items-center gap-2 mt-1 ml-1">
+                                                <Phone className="w-3 h-3 text-emerald-600" />
+                                                <span className="text-xs text-stone-600 font-medium">
+                                                    {selectedPatient.whatsapp || selectedPatient.phone || 'Sem contato cadastrado'}
+                                                </span>
+                                            </div>
+                                        )}
+                                        
                                         {showPatientList && (
                                             <>
                                             <div className="fixed inset-0 z-40" onClick={() => setShowPatientList(false)}></div>
@@ -551,7 +638,20 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                             </>
                                         )}
                                     </div>
-                                    <div className="grid grid-cols-2 gap-4"><div><Label>Data</Label><Input type="date" value={formData.date || ''} onChange={e => setFormData({...formData, date: e.target.value})}/></div><div><Label>Hora</Label><Input type="time" value={formData.time || ''} onChange={e => setFormData({...formData, time: e.target.value})}/></div></div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div><Label>Data</Label><Input type="date" value={formData.date || ''} onChange={e => setFormData({...formData, date: e.target.value})}/></div>
+                                        {/* HORÁRIOS INÍCIO E FIM */}
+                                        <div className="flex gap-2">
+                                            <div className="flex-1">
+                                                <Label>Hora Início</Label>
+                                                <Input type="time" value={formData.time || ''} onChange={e => setFormData({...formData, time: e.target.value})}/>
+                                            </div>
+                                            <div className="flex-1">
+                                                <Label>Hora Final</Label>
+                                                <Input type="time" value={formData.end_time || ''} onChange={e => setFormData({...formData, end_time: e.target.value})}/>
+                                            </div>
+                                        </div>
+                                    </div>
                                     <div className="grid grid-cols-2 gap-4"><div><Label>Tipo</Label><Select value={formData.type} onValueChange={v => setFormData({...formData, type: v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{TYPE_OPTIONS.map(t=><SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent></Select></div><div><Label>Status</Label><Select value={formData.status} onValueChange={v => setFormData({...formData, status: v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{STATUS_OPTIONS.map(s=><SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div></div>
                                     <div className="md:col-span-2">
                                         <Label>Tipo de Atendimento (Detalhe)</Label>
@@ -571,20 +671,36 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
 
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                 <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
-                                    <div className="flex justify-between items-center">
+                                    <div className="flex justify-between items-center mb-2">
                                         <Label className="font-bold uppercase text-xs text-stone-500 flex gap-2 items-center"><Syringe className="w-3 h-3"/> Procedimentos</Label>
-                                        <div className="flex gap-2">
-                                            {!isConsultationMode && <Button variant="ghost" size="sm" onClick={()=>setProcedures([...procedures, {name:'', value:0}])} className="text-xs text-blue-600">+ Adicionar</Button>}
-                                            {isConsultationMode ? (
-                                                <Button size="sm" onClick={() => toggleConsultationMode(false)} className="bg-stone-900 text-white hover:bg-stone-800 text-xs gap-1">
-                                                    <Plus className="w-3 h-3" /> Iniciar Procedimento
-                                                </Button>
-                                            ) : (
-                                                <Button size="sm" variant="outline" onClick={() => toggleConsultationMode(true)} className="text-xs gap-1 border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100">
-                                                    <Stethoscope className="w-3 h-3" /> Modo Consulta
-                                                </Button>
-                                            )}
+                                        <Button variant="ghost" size="sm" onClick={()=>setProcedures([...procedures, {name:'', value:0}])} className="text-xs text-blue-600">+ Adicionar</Button>
+                                    </div>
+
+                                    {/* MODO CONSULTA SIMPLIFICADO */}
+                                    <div className="bg-blue-50/50 border border-blue-100 p-3 rounded-lg flex items-center gap-4 mb-4">
+                                        <div className="flex items-center space-x-2">
+                                            <Checkbox 
+                                                id="consultation" 
+                                                checked={includeConsultation}
+                                                onCheckedChange={setIncludeConsultation}
+                                            />
+                                            <Label htmlFor="consultation" className="text-sm font-medium text-blue-900 cursor-pointer">
+                                                Cobrar Consulta?
+                                            </Label>
                                         </div>
+                                        {includeConsultation && (
+                                            <div className="flex-1 max-w-[150px]">
+                                                <div className="relative">
+                                                    <span className="absolute left-2 top-1.5 text-xs text-stone-400">R$</span>
+                                                    <Input 
+                                                        className="h-8 pl-6 text-sm bg-white" 
+                                                        value={formatMoneyDisplay(consultationValue)}
+                                                        onChange={e => handleConsultationValueChange(e.target.value)}
+                                                        placeholder="0,00"
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                     
                                     <div className="grid grid-cols-5 gap-2 text-[10px] uppercase font-bold text-stone-400 mb-1 px-1"><span className="col-span-3">Nome</span><span className="col-span-2">Valor (R$)</span></div>
@@ -597,25 +713,17 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                         <div key={i} className="flex gap-2 items-center">
                                             <div className="col-span-3 flex-1">
                                                 <div className="relative">
-                                                    {isConsultationMode && p.name === 'Consulta' ? (
-                                                        <Input className="h-9 bg-stone-100 font-medium" value="Consulta" disabled />
-                                                    ) : (
-                                                        <>
-                                                            <Select value={selectValue} onValueChange={(val) => handleSelectProcedure(i, val)}>
-                                                                <SelectTrigger className="h-9"><SelectValue placeholder="Selecione..."/></SelectTrigger>
-                                                                <SelectContent>{proceduresList.map(proc => <SelectItem key={proc.id} value={proc.name}>{proc.name}</SelectItem>)}<SelectItem value="Outro">Outro (Digitar)</SelectItem></SelectContent>
-                                                            </Select>
-                                                            {isCustom && <Input className="mt-1 h-8 text-xs" placeholder="Digite o nome..." value={p.name === 'Outro' ? '' : p.name} onChange={e => { const n = [...procedures]; n[i].name = e.target.value; setProcedures(n); }} />}
-                                                        </>
-                                                    )}
+                                                    <Select value={selectValue} onValueChange={(val) => handleDisplayProcSelect(i, val)}>
+                                                        <SelectTrigger className="h-9"><SelectValue placeholder="Selecione..."/></SelectTrigger>
+                                                        <SelectContent>{proceduresList.map(proc => <SelectItem key={proc.id} value={proc.name}>{proc.name}</SelectItem>)}<SelectItem value="Outro">Outro (Digitar)</SelectItem></SelectContent>
+                                                    </Select>
+                                                    {isCustom && <Input className="mt-1 h-8 text-xs" placeholder="Digite o nome..." value={p.name === 'Outro' ? '' : p.name} onChange={e => { const n = [...procedures]; n[i].name = e.target.value; setProcedures(n); }} />}
                                                 </div>
                                             </div>
                                             <div className="w-24">
-                                                <Input className="pl-2 h-9" type="text" placeholder="0,00" value={formatMoneyDisplay(p.value)} onChange={e => handleMoneyChange(e.target.value, setProcedures, i, 'value', procedures)}/>
+                                                <Input className="pl-2 h-9" type="text" placeholder="0,00" value={formatMoneyDisplay(p.value)} onChange={e => handleDisplayProcMoneyChange(e.target.value, i)}/>
                                             </div>
-                                            {!isConsultationMode && (
-                                                <Button variant="ghost" size="icon" className="h-9 w-9 text-stone-400 hover:text-red-500 hover:bg-red-50" onClick={()=>setProcedures(procedures.filter((_,ix)=>ix!==i))}><Trash2 className="w-4 h-4"/></Button>
-                                            )}
+                                            <Button variant="ghost" size="icon" className="h-9 w-9 text-stone-400 hover:text-red-500 hover:bg-red-50" onClick={()=>removeDisplayProc(i)}><Trash2 className="w-4 h-4"/></Button>
                                         </div>
                                     )})}
                                 </div>

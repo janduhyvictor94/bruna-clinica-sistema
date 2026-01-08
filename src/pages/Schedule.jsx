@@ -109,12 +109,14 @@ export default function Schedule() {
       const s = appt.status;
       const t = appt.type;
 
-      // 1. Status Críticos
-      if (s === 'Cancelado') return 'bg-red-50 text-red-700 border-l-4 border-red-500 opacity-60';
+      // 1. Status Críticos e Cancelamentos
+      if (s === 'Não Compareceu' || s === 'Cancelado') return 'bg-red-50 text-red-700 border-l-4 border-red-500 opacity-60';
+      if (s === 'Desmarcado') return 'bg-stone-100 text-stone-700 border-l-4 border-stone-500 opacity-60'; // Cinza para desmarcado
       
       // 2. Realizados (Cores Distintas)
       if (s === 'Realizado Pago') return 'bg-emerald-100 text-emerald-900 border-l-4 border-emerald-600'; // Verde
       if (s === 'Realizado a Pagar') return 'bg-orange-100 text-orange-800 border-l-4 border-orange-500'; // Laranja
+      if (s === 'Realizado (Em Andamento)') return 'bg-indigo-100 text-indigo-800 border-l-4 border-indigo-500'; // Novo: Roxo/Índigo para parcelado em andamento
       if (s === 'Realizado') return 'bg-cyan-100 text-cyan-800 border-l-4 border-cyan-500'; // Ciano (Antigo "Em Atendimento")
       
       // 3. Confirmados
@@ -122,7 +124,7 @@ export default function Schedule() {
 
       // 4. Agendados
       if (t === 'Novo') return 'bg-blue-100 text-blue-800 border-l-4 border-blue-500'; // Azul
-      return 'bg-purple-100 text-purple-800 border-l-4 border-purple-500'; // Roxo
+      return 'bg-purple-100 text-purple-800 border-l-4 border-purple-500'; // Roxo (Recorrente)
   };
 
   const handleDeleteAppointment = async (id) => {
@@ -289,9 +291,11 @@ export default function Schedule() {
                                       {/* Badge Colorido na Lista Lateral */}
                                       <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase border 
                                         ${evt.status === 'Confirmado' ? 'bg-lime-100 text-lime-800 border-lime-200' :
-                                          evt.status === 'Cancelado' ? 'bg-red-50 text-red-700 border-red-200' :
+                                          (evt.status === 'Cancelado' || evt.status === 'Não Compareceu') ? 'bg-red-50 text-red-700 border-red-200' :
+                                          evt.status === 'Desmarcado' ? 'bg-stone-100 text-stone-700 border-stone-300' :
                                           evt.status === 'Realizado Pago' ? 'bg-emerald-100 text-emerald-800 border-emerald-200' :
                                           evt.status === 'Realizado a Pagar' ? 'bg-orange-100 text-orange-700 border-orange-200' :
+                                          evt.status === 'Realizado (Em Andamento)' ? 'bg-indigo-100 text-indigo-700 border-indigo-200' :
                                           evt.status === 'Realizado' ? 'bg-cyan-100 text-cyan-700 border-cyan-200' :
                                           evt.type === 'Novo' ? 'bg-blue-100 text-blue-700 border-blue-200' :
                                           'bg-purple-100 text-purple-700 border-purple-200'
@@ -307,13 +311,17 @@ export default function Schedule() {
               
               {/* LEGENDA DE CORES DEFINITIVA */}
               <div className="p-4 border-t border-stone-100 bg-stone-50/50 text-[10px] grid grid-cols-2 gap-2">
-                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-100 border-l-2 border-blue-500"></div><span className="text-stone-600">Novo (Agendado)</span></div>
-                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-100 border-l-2 border-purple-500"></div><span className="text-stone-600">Recorrente Agendado</span></div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-100 border-l-2 border-blue-500"></div><span className="text-stone-600">Novo</span></div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-100 border-l-2 border-purple-500"></div><span className="text-stone-600">Recorrente</span></div>
                   <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-lime-100 border-l-2 border-lime-500"></div><span className="text-stone-600">Confirmado</span></div>
+                  
                   <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-emerald-100 border-l-2 border-emerald-600"></div><span className="text-stone-600">Realizado (Pago)</span></div>
                   <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-orange-100 border-l-2 border-orange-500"></div><span className="text-stone-600">Realizado (A Pagar)</span></div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-indigo-100 border-l-2 border-indigo-500"></div><span className="text-stone-600">Realizado (Em Andamento)</span></div>
                   <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-cyan-100 border-l-2 border-cyan-500"></div><span className="text-stone-600">Realizado</span></div>
-                  <div className="flex items-center gap-2 col-span-2"><div className="w-3 h-3 rounded bg-red-100 border-l-2 border-red-500"></div><span className="text-stone-600">Cancelado</span></div>
+                  
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-stone-100 border-l-2 border-stone-500"></div><span className="text-stone-600">Desmarcado</span></div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-red-100 border-l-2 border-red-500"></div><span className="text-stone-600">Não Compareceu</span></div>
               </div>
           </Card>
 
