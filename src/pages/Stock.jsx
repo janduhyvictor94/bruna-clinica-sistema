@@ -31,11 +31,22 @@ import {
 
 const CATEGORIES = ['Medicamento', 'Insumo', 'Equipamento', 'Descartável', 'Cosmético', 'Outro'];
 
+// FUNÇÃO DE SEGURANÇA PARA NÚMEROS
+// Converte qualquer entrada (texto com vírgula, nulo, undefined) para um número válido (float)
+const safeParseFloat = (value) => {
+    if (typeof value === 'number') return value;
+    if (!value) return 0;
+    // Troca vírgula por ponto e remove caracteres não numéricos exceto ponto e sinal
+    const cleanStr = String(value).replace(',', '.'); 
+    const num = parseFloat(cleanStr);
+    return isNaN(num) ? 0 : num;
+};
+
 export default function Stock() {
   const [activeTab, setActiveTab] = useState('inventory');
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
-  const [supplierFilter, setSupplierFilter] = useState('all'); // NOVO FILTRO
+  const [supplierFilter, setSupplierFilter] = useState('all'); 
   
   // Modais
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
@@ -66,28 +77,28 @@ export default function Stock() {
     },
   });
 
-  // --- LISTA DE FORNECEDORES ÚNICOS ---
   const uniqueSuppliers = useMemo(() => {
     const rawSuppliers = materials.map(m => m.supplier).filter(s => s && s.trim() !== '');
     return [...new Set(rawSuppliers)].sort();
   }, [materials]);
 
-  // --- NOVA LÓGICA: CONTABILIDADE POR FORNECEDOR ---
+  // Estatísticas por Fornecedor (Blindado)
   const stockBySupplierStats = useMemo(() => {
     const stats = {};
     materials.forEach(m => {
         const sup = m.supplier || 'Não informado';
         if (!stats[sup]) stats[sup] = { countItems: 0, totalQty: 0, totalValue: 0 };
         
-        stats[sup].countItems += 1; // Quantos produtos diferentes
-        stats[sup].totalQty += (m.stock_quantity || 0); // Soma das unidades
-        stats[sup].totalValue += (m.stock_quantity || 0) * (m.cost_per_unit || 0); // Valor financeiro
+        const qtd = safeParseFloat(m.stock_quantity);
+        const cust = safeParseFloat(m.cost_per_unit);
+
+        stats[sup].countItems += 1; 
+        stats[sup].totalQty += qtd; 
+        stats[sup].totalValue += qtd * cust; 
     });
-    // Ordena por valor mais alto
     return Object.entries(stats).sort(([,a], [,b]) => b.totalValue - a.totalValue);
   }, [materials]);
 
-  // --- MUTAÇÕES ---
   const createMaterialMutation = useMutation({
     mutationFn: async (data) => { const { error } = await supabase.from('materials').insert([data]); if (error) throw error; },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['materials'] }); setIsProductModalOpen(false); toast.success('Produto cadastrado'); },
@@ -114,16 +125,25 @@ export default function Stock() {
   const createMovementMutation = useMutation({
     mutationFn: async (data) => {
       const material = materials.find(m => m.id === data.material_id);
-      const previousStock = material?.stock_quantity || 0;
+      
+      // LÓGICA BLINDADA DE CÁLCULO
+      const previousStock = safeParseFloat(material?.stock_quantity);
+      const qtdMovement = safeParseFloat(data.quantity);
+      const costUnit = safeParseFloat(material?.cost_per_unit);
+      
       let newStock = previousStock;
       
-      if (data.type === 'entrada') newStock = previousStock + data.quantity;
-      else if (data.type === 'saida') newStock = previousStock - data.quantity;
-      else newStock = data.quantity;
+      if (data.type === 'entrada') newStock = previousStock + qtdMovement;
+      else if (data.type === 'saida') newStock = previousStock - qtdMovement;
+      else newStock = qtdMovement; // Ajuste manual
 
       const { error: moveError } = await supabase.from('stock_movements').insert([{
-        ...data, material_name: material?.name, previous_stock: previousStock, new_stock: newStock,
-        cost_per_unit: material?.cost_per_unit || 0, total_cost: (material?.cost_per_unit || 0) * data.quantity,
+        ...data, 
+        material_name: material?.name, 
+        previous_stock: previousStock, 
+        new_stock: newStock,
+        cost_per_unit: costUnit, 
+        total_cost: costUnit * qtdMovement,
       }]);
       if (moveError) throw moveError;
 
@@ -146,7 +166,11 @@ export default function Stock() {
     return matchesSearch && matchesCategory && matchesSupplier;
   });
 
-  const lowStockMaterials = materials.filter(m => m.minimum_stock && m.stock_quantity <= m.minimum_stock);
+  const lowStockMaterials = materials.filter(m => {
+      const min = safeParseFloat(m.minimum_stock);
+      const current = safeParseFloat(m.stock_quantity);
+      return min > 0 && current <= min;
+  });
 
   const alertsBySupplier = useMemo(() => {
     return lowStockMaterials.reduce((acc, material) => {
@@ -157,7 +181,10 @@ export default function Stock() {
     }, {});
   }, [lowStockMaterials]);
 
-  const totalStockValue = materials.reduce((sum, m) => sum + ((m.stock_quantity || 0) * (m.cost_per_unit || 0)), 0);
+  // Soma Total Blindada
+  const totalStockValue = materials.reduce((sum, m) => {
+      return sum + (safeParseFloat(m.stock_quantity) * safeParseFloat(m.cost_per_unit));
+  }, 0);
 
   return (
     <div className="space-y-6">
@@ -198,7 +225,7 @@ export default function Stock() {
                             {items.map(m => (
                                 <Badge key={m.id} variant="outline" className="bg-white border-amber-300 text-amber-800 text-[10px] flex gap-1">
                                     <span className="font-semibold">{m.name}</span>
-                                    <span className="text-amber-600 bg-amber-50 px-1 rounded-sm">Faltam: {(m.minimum_stock - m.stock_quantity).toFixed(0)}</span>
+                                    <span className="text-amber-600 bg-amber-50 px-1 rounded-sm">Faltam: {(safeParseFloat(m.minimum_stock) - safeParseFloat(m.stock_quantity)).toFixed(0)}</span>
                                 </Badge>
                             ))}
                         </div>
@@ -217,7 +244,7 @@ export default function Stock() {
         <Card className="bg-white border-stone-100"><CardContent className="p-3 sm:p-4"><div className="flex items-center gap-2 sm:gap-3"><div className="p-1.5 sm:p-2 bg-purple-50 rounded-lg"><History className="w-4 h-4 sm:w-5 sm:h-5 text-purple-600" /></div><div className="min-w-0"><p className="text-[10px] sm:text-xs text-stone-500 truncate">Movimentações</p><p className="text-lg sm:text-xl font-light text-stone-800">{movements.length}</p></div></div></CardContent></Card>
       </div>
 
-      {/* CARD 3: NOVO - POSIÇÃO DE ESTOQUE POR FORNECEDOR */}
+      {/* CARD 3: POSIÇÃO DE ESTOQUE POR FORNECEDOR */}
       <Card className="bg-white border-stone-100">
         <CardHeader className="pb-2 p-4 bg-stone-50/50 border-b border-stone-100">
             <CardTitle className="text-sm font-bold text-stone-700 flex items-center gap-2">
@@ -256,7 +283,6 @@ export default function Stock() {
           <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
             <div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" /><Input placeholder="Buscar produto..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10 bg-white text-sm"/></div>
             
-            {/* FILTROS: Categoria e Fornecedor */}
             <div className="flex gap-2">
                 <Select value={categoryFilter} onValueChange={setCategoryFilter}>
                     <SelectTrigger className="w-32 bg-white text-sm"><Filter className="w-4 h-4 mr-2" /><SelectValue placeholder="Cat" /></SelectTrigger>
@@ -275,7 +301,10 @@ export default function Stock() {
 
           <div className="grid gap-2 sm:gap-3">
             {filteredMaterials.map((material) => {
-              const isLowStock = material.minimum_stock && material.stock_quantity <= material.minimum_stock;
+              const stock = safeParseFloat(material.stock_quantity);
+              const minStock = safeParseFloat(material.minimum_stock);
+              const isLowStock = minStock > 0 && stock <= minStock;
+              
               return (
                 <Card key={material.id} className={`bg-white border-stone-100 ${isLowStock ? 'border-l-4 border-l-amber-400' : ''}`}>
                   <CardContent className="p-3 sm:p-4">
@@ -287,9 +316,9 @@ export default function Stock() {
                           {isLowStock && (<Badge className="bg-amber-100 text-amber-700 text-[10px] sm:text-xs"><AlertTriangle className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-0.5 sm:mr-1" /><span className="hidden sm:inline">Estoque Baixo</span><span className="sm:hidden">Baixo</span></Badge>)}
                         </div>
                         <div className="flex flex-wrap gap-2 sm:gap-4 text-xs sm:text-sm text-stone-500">
-                          <span><span className="hidden sm:inline">Estoque: </span><strong className={isLowStock ? 'text-amber-600' : 'text-stone-700'}>{material.stock_quantity || 0}</strong> {material.unit || 'un'}</span>
-                          <span className="hidden sm:inline">Mín: {material.minimum_stock || 0} {material.unit || 'un'}</span>
-                          <span>R$ {(material.cost_per_unit || 0).toFixed(2)}<span className="hidden sm:inline">/{material.unit || 'un'}</span></span>
+                          <span><span className="hidden sm:inline">Estoque: </span><strong className={isLowStock ? 'text-amber-600' : 'text-stone-700'}>{stock}</strong> {material.unit || 'un'}</span>
+                          <span className="hidden sm:inline">Mín: {minStock} {material.unit || 'un'}</span>
+                          <span>R$ {(safeParseFloat(material.cost_per_unit)).toFixed(2)}<span className="hidden sm:inline">/{material.unit || 'un'}</span></span>
                           {material.supplier && <span className="flex items-center gap-1"><Truck className="w-3 h-3"/> {material.supplier}</span>}
                         </div>
                       </div>
@@ -350,7 +379,6 @@ export default function Stock() {
   );
 }
 
-// --- MODAL DE PRODUTO ---
 function ProductModal({ open, onClose, product, onSave, isLoading, existingSuppliers = [] }) {
   const [formData, setFormData] = useState({ name: '', description: '', unit: '', cost_per_unit: '', stock_quantity: '', minimum_stock: '', category: '', supplier: '', });
   const [isNewSupplier, setIsNewSupplier] = useState(false);
@@ -369,7 +397,15 @@ function ProductModal({ open, onClose, product, onSave, isLoading, existingSuppl
     e.preventDefault();
     let finalSupplier = formData.supplier.trim();
     if (finalSupplier) finalSupplier = finalSupplier.charAt(0).toUpperCase() + finalSupplier.slice(1);
-    onSave({ ...formData, supplier: finalSupplier, cost_per_unit: parseFloat(formData.cost_per_unit) || 0, stock_quantity: parseFloat(formData.stock_quantity) || 0, minimum_stock: parseFloat(formData.minimum_stock) || 0, });
+    
+    // USANDO SAFE PARSE NA HORA DE SALVAR
+    onSave({ 
+        ...formData, 
+        supplier: finalSupplier, 
+        cost_per_unit: safeParseFloat(formData.cost_per_unit), 
+        stock_quantity: safeParseFloat(formData.stock_quantity), 
+        minimum_stock: safeParseFloat(formData.minimum_stock), 
+    });
   };
 
   return (
@@ -399,7 +435,6 @@ function ProductModal({ open, onClose, product, onSave, isLoading, existingSuppl
   );
 }
 
-// --- MODAL GERENCIADOR DE FORNECEDORES ---
 function SupplierManagerModal({ open, onClose, suppliers, onDelete }) {
     const [confirmDelete, setConfirmDelete] = useState(null);
     return (
@@ -425,8 +460,33 @@ function SupplierManagerModal({ open, onClose, suppliers, onDelete }) {
 
 function MovementModal({ open, onClose, materials, selectedMaterial, onSave, isLoading }) {
   const [formData, setFormData] = useState({ material_id: '', type: 'entrada', quantity: '', reason: '', date: format(new Date(), 'yyyy-MM-dd') });
-  React.useEffect(() => { if (selectedMaterial) setFormData(prev => ({ ...prev, material_id: selectedMaterial.id })); else setFormData({ material_id: '', type: 'entrada', quantity: '', reason: '', date: format(new Date(), 'yyyy-MM-dd') }); }, [selectedMaterial, open]);
-  const handleSubmit = (e) => { e.preventDefault(); onSave({ ...formData, quantity: parseFloat(formData.quantity) || 0 }); };
+  
+  React.useEffect(() => { 
+      if (selectedMaterial) setFormData(prev => ({ ...prev, material_id: selectedMaterial.id })); 
+      else setFormData({ material_id: '', type: 'entrada', quantity: '', reason: '', date: format(new Date(), 'yyyy-MM-dd') }); 
+  }, [selectedMaterial, open]);
+  
+  const handleSubmit = (e) => { 
+      e.preventDefault(); 
+      // SafeParse garante que mandamos um número
+      onSave({ ...formData, quantity: safeParseFloat(formData.quantity) }); 
+  };
+  
   const selected = materials.find(m => m.id === formData.material_id);
-  return (<Dialog open={open} onOpenChange={onClose}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>Nova Movimentação</DialogTitle><DialogDescription>Entrada ou saída manual.</DialogDescription></DialogHeader><form onSubmit={handleSubmit} className="space-y-4"><div><Label>Produto *</Label><Select value={formData.material_id} onValueChange={(v) => setFormData({ ...formData, material_id: v })}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{materials.map(m => (<SelectItem key={m.id} value={m.id}>{m.name} ({m.stock_quantity}{m.unit})</SelectItem>))}</SelectContent></Select></div><div className="grid grid-cols-2 gap-4"><div><Label>Tipo *</Label><Select value={formData.type} onValueChange={(v) => setFormData({ ...formData, type: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="entrada">Entrada</SelectItem><SelectItem value="saida">Saída</SelectItem><SelectItem value="ajuste">Ajuste</SelectItem></SelectContent></Select></div><div><Label>Quantidade *</Label><Input type="number" step="0.1" value={formData.quantity} onChange={(e) => setFormData({ ...formData, quantity: e.target.value })} required /></div></div><div><Label>Motivo</Label><Input value={formData.reason} onChange={(e) => setFormData({ ...formData, reason: e.target.value })} placeholder="Ex: Compra, Perda..." /></div>{selected && formData.quantity && (<div className="p-3 bg-stone-50 rounded-lg text-sm"><p>Atual: <strong>{selected.stock_quantity}</strong></p><p>Novo: <strong>{formData.type === 'entrada' ? (selected.stock_quantity || 0) + parseFloat(formData.quantity || 0) : formData.type === 'saida' ? (selected.stock_quantity || 0) - parseFloat(formData.quantity || 0) : parseFloat(formData.quantity || 0)}</strong></p></div>)}<div className="flex justify-end gap-3 pt-4"><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button type="submit" disabled={isLoading} className="bg-stone-800 hover:bg-stone-900">Registrar</Button></div></form></DialogContent></Dialog>);
+  
+  // PREVIEW BLINDADO
+  const previewCurrent = selected ? safeParseFloat(selected.stock_quantity) : 0;
+  const previewQtd = safeParseFloat(formData.quantity);
+  const previewNew = formData.type === 'entrada' ? previewCurrent + previewQtd : formData.type === 'saida' ? previewCurrent - previewQtd : previewQtd;
+
+  return (<Dialog open={open} onOpenChange={onClose}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>Nova Movimentação</DialogTitle><DialogDescription>Entrada ou saída manual.</DialogDescription></DialogHeader><form onSubmit={handleSubmit} className="space-y-4"><div><Label>Produto *</Label><Select value={formData.material_id} onValueChange={(v) => setFormData({ ...formData, material_id: v })}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{materials.map(m => (<SelectItem key={m.id} value={m.id}>{m.name} ({safeParseFloat(m.stock_quantity)}{m.unit})</SelectItem>))}</SelectContent></Select></div><div className="grid grid-cols-2 gap-4"><div><Label>Tipo *</Label><Select value={formData.type} onValueChange={(v) => setFormData({ ...formData, type: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="entrada">Entrada</SelectItem><SelectItem value="saida">Saída</SelectItem><SelectItem value="ajuste">Ajuste</SelectItem></SelectContent></Select></div><div><Label>Quantidade *</Label><Input type="number" step="0.1" value={formData.quantity} onChange={(e) => setFormData({ ...formData, quantity: e.target.value })} required /></div></div><div><Label>Motivo</Label><Input value={formData.reason} onChange={(e) => setFormData({ ...formData, reason: e.target.value })} placeholder="Ex: Compra, Perda..." /></div>
+  
+  {selected && formData.quantity && (
+      <div className="p-3 bg-stone-50 rounded-lg text-sm">
+          <p>Atual: <strong>{previewCurrent}</strong></p>
+          <p>Novo: <strong>{previewNew}</strong></p>
+      </div>
+  )}
+  
+  <div className="flex justify-end gap-3 pt-4"><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button type="submit" disabled={isLoading} className="bg-stone-800 hover:bg-stone-900">Registrar</Button></div></form></DialogContent></Dialog>);
 }

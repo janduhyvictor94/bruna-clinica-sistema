@@ -100,19 +100,20 @@ export default function Appointments() {
 
   const saveMutation = useMutation({
     mutationFn: async (data) => {
-        const { id, returns_to_create, ...rawData } = data;
+        const { id, returns_to_create, consultation_value, ...rawData } = data;
         
+        // Separação clara: O total_amount salvo no agendamento refere-se ao serviço principal
         const payload = {
             patient_id: rawData.patient_id,
             date: rawData.date,
             time: rawData.time,
-            end_time: rawData.end_time, // Salva o horário final
+            end_time: rawData.end_time,
             status: rawData.status,
             type: rawData.type,
             service_type_custom: rawData.service_type_custom,
             notes: rawData.notes,
-            payment_methods_json: rawData.payment_methods, 
-            procedures_json: rawData.procedures_json,
+            payment_methods_json: rawData.payment_methods, // Agora inclui a consulta para fins de relatório
+            procedures_json: rawData.procedures_json, 
             materials_json: rawData.materials_json,
             total_amount: Number(rawData.total_amount) || 0,
             cost_amount: Number(rawData.cost_amount) || 0,
@@ -137,11 +138,33 @@ export default function Appointments() {
 
         const apptId = Number(appointmentId);
         
-        // Se for Realizado (qualquer variação), processa estoque e parcelas
-        if (payload.status.includes('Realizado')) {
-            await supabase.from('stock_movements').delete().eq('appointment_id', apptId);
-            await supabase.from('installments').delete().eq('appointment_id', apptId);
+        // --- GERENCIAMENTO DE TABELAS RELACIONADAS ---
+        
+        // 1. Limpeza inicial (Evita duplicações)
+        await supabase.from('stock_movements').delete().eq('appointment_id', apptId);
+        await supabase.from('installments').delete().eq('appointment_id', apptId);
 
+        // 2. CONSULTA (Cobrança Automática e Independente)
+        // Se houver valor de consulta, cria um installment recebido IMEDIATAMENTE.
+        if (consultation_value > 0) {
+            // CRÍTICO: Aqui adicionamos 'method': 'Consulta' para aparecer no Detalhamento de Entradas
+            await supabase.from('installments').insert([{
+                appointment_id: apptId,
+                patient_name: rawData.patient_name_ref || 'Paciente',
+                installment_number: 1,
+                total_installments: 1,
+                value: consultation_value,
+                due_date: payload.date, 
+                is_received: true,      
+                received_date: payload.date,
+                method: 'Consulta' // Garante que o Financeiro categorize corretamente
+            }]);
+        }
+
+        // 3. MOVIMENTAÇÕES DE ESTOQUE E PARCELAS DO SERVIÇO (Apenas se Realizado)
+        if (payload.status.includes('Realizado')) {
+
+            // Estoque
             if (rawData.materials_json && rawData.materials_json.length > 0) {
                 const { data: dbMaterials } = await supabase.from('materials').select('id, name, stock_quantity, cost_per_unit');
                 const movementsPayload = [];
@@ -174,10 +197,14 @@ export default function Appointments() {
                 }
             }
 
+            // Parcelas dos Procedimentos (Payment Methods)
             const installmentsPayload = [];
             
             if (rawData.payment_methods && rawData.payment_methods.length > 0) {
                 rawData.payment_methods.forEach(pm => {
+                    // PULA A CONSULTA aqui para não duplicar, pois já inserimos manualmente acima com is_received=true
+                    if (pm.method === 'Consulta') return;
+
                     const totalVal = Number(pm.value) || 0;
                     const isCreditCard = CREDIT_METHODS.includes(pm.method);
                     const isScheduled = pm.method === 'Agendamento de Pagamento';
@@ -196,7 +223,8 @@ export default function Appointments() {
                             value: totalVal, 
                             due_date: pm.scheduled_date, 
                             is_received: false, 
-                            received_date: null
+                            received_date: null,
+                            method: pm.method // Salva o método para o detalhamento
                         });
                     }
                     else if (isCreditCard) {
@@ -216,10 +244,24 @@ export default function Appointments() {
                                 value: valPerInst,
                                 due_date: formattedDueDate,
                                 is_received: true, 
-                                received_date: formattedDueDate 
+                                received_date: formattedDueDate,
+                                method: pm.method
                             });
                         }
-                    } 
+                    } else {
+                        // Pagamentos à vista normais (Dinheiro, Pix, etc)
+                         installmentsPayload.push({
+                            appointment_id: apptId,
+                            patient_name: rawData.patient_name_ref || 'Paciente',
+                            installment_number: 1,
+                            total_installments: 1,
+                            value: totalVal,
+                            due_date: payload.date,
+                            is_received: true, 
+                            received_date: payload.date,
+                            method: pm.method
+                        });
+                    }
                 });
             }
             
@@ -227,9 +269,6 @@ export default function Appointments() {
                 const { error: instError } = await supabase.from('installments').insert(installmentsPayload);
                 if (instError) throw instError;
             }
-        } else if (id) {
-            await supabase.from('stock_movements').delete().eq('appointment_id', apptId);
-            await supabase.from('installments').delete().eq('appointment_id', apptId);
         }
 
         if (returns_to_create && returns_to_create.length > 0) {
@@ -276,7 +315,7 @@ export default function Appointments() {
       <div className="flex flex-col sm:flex-row gap-4 max-w-4xl">
           <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-stone-400 w-4 h-4" />
-              <Input placeholder="Buscar paciente..." className="pl-10 bg-white border-stone-200 rounded-full shadow-sm" value={search} onChange={(e) => setSearch(e.target.value)}/>
+              <Input placeholder="Buscar paciente..." className="pl-10 bg-white border-stone-200 rounded-full shadow-sm" value={search} onChange={(e) => setSearchTerm(e.target.value)}/>
           </div>
           
           <div className="flex items-center gap-2 bg-white border border-stone-200 rounded-full px-3 py-1 shadow-sm w-full sm:w-auto">
@@ -402,26 +441,38 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                     notes: initialData.notes || ''
                 });
                 
-                // Separa os procedimentos normais da "Consulta" se ela existir no array salvo
+                // Procedimentos normais - Filtrando "Consulta" se ela tiver sido salva acidentalmente como procedimento no passado
                 const loadedProcedures = Array.isArray(initialData.procedures_json) ? initialData.procedures_json : [];
-                const consultationItem = loadedProcedures.find(p => p.name === 'Consulta');
-                const otherProcedures = loadedProcedures.filter(p => p.name !== 'Consulta');
+                // A "Consulta" pode estar salva como procedimento (versão antiga) OU como método de pagamento (versão nova)
+                // Vamos checar o método de pagamento primeiro
+                const loadedMethods = Array.isArray(initialData.payment_methods_json) ? initialData.payment_methods_json : [];
+                
+                // Procura a Consulta nos Métodos de Pagamento (Nova lógica)
+                const consultationMethod = loadedMethods.find(m => m.method === 'Consulta');
+                
+                // Procura a Consulta nos Procedimentos (Retrocompatibilidade)
+                const consultationProc = loadedProcedures.find(p => p.name === 'Consulta');
 
-                if (consultationItem) {
+                if (consultationMethod) {
                     setIncludeConsultation(true);
-                    setConsultationValue(consultationItem.value || 0);
+                    setConsultationValue(consultationMethod.value || 0);
+                } else if (consultationProc) {
+                    setIncludeConsultation(true);
+                    setConsultationValue(consultationProc.value || 0);
                 } else {
                     setIncludeConsultation(false);
                     setConsultationValue(0);
                 }
 
-                setProcedures(otherProcedures.length > 0 ? otherProcedures : [{ name: '', value: 0 }]);
+                // Limpa a "Consulta" das listas visuais para não duplicar
+                const visibleProcedures = loadedProcedures.filter(p => p.name !== 'Consulta');
+                const visibleMethods = loadedMethods.filter(m => m.method !== 'Consulta');
+
+                setProcedures(visibleProcedures.length > 0 ? visibleProcedures : [{ name: '', value: 0 }]);
+                setPaymentMethods(visibleMethods);
                 
                 const loadedMaterials = Array.isArray(initialData.materials_json) ? initialData.materials_json.map(m => ({...m, quantity: m.quantity || 1})) : [];
                 setMaterials(loadedMaterials);
-                
-                const loadedMethods = Array.isArray(initialData.payment_methods_json) ? initialData.payment_methods_json : [];
-                setPaymentMethods(loadedMethods);
                 
                 setReturnsList([]);
 
@@ -464,14 +515,17 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
         setConsultationValue(Number(rawValue) / 100);
     };
 
+    // Cálculos Financeiros Atualizados
     const financials = useMemo(() => {
-        const totalProcedures = procedures.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
-        // Soma a consulta se estiver marcada
+        // Total Serviço = Apenas procedimentos
+        const totalService = procedures.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
+        
+        // Valor da Consulta separado
         const consultVal = includeConsultation ? (Number(consultationValue) || 0) : 0;
-        const totalService = totalProcedures + consultVal;
-
+        
         const totalMaterials = materials.reduce((acc, curr) => acc + ((Number(curr.cost) || 0) * (Number(curr.quantity) || 1)), 0);
         
+        // Pagamentos Recebidos (Dos métodos lançados)
         let totalPaidReal = 0;
         paymentMethods.forEach(pm => {
             const isCreditCard = CREDIT_METHODS.includes(pm.method);
@@ -486,7 +540,7 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
         });
         
         const profit = totalPaidReal - totalMaterials;
-        return { totalService, totalMaterials, totalPaidReal, profit };
+        return { totalService, totalMaterials, totalPaidReal, profit, consultVal };
     }, [procedures, materials, paymentMethods, includeConsultation, consultationValue]);
 
     const handleSubmit = () => {
@@ -499,40 +553,38 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
             return toast.error("A data de Vencimento é obrigatória para Agendamento de Pagamento.");
         }
 
-        let finalPaymentMethods = [...paymentMethods];
-        
-        // Se houver valor mas nenhum pagamento, lança dinheiro por padrão
-        if (financials.totalService > 0 && finalPaymentMethods.length === 0) {
-             finalPaymentMethods = [{
-                method: 'Dinheiro',
-                value: financials.totalService,
-                installments: 1,
-                discount_percent: 0,
-                scheduled_date: ''
-            }];
-            toast.info("Pagamento lançado automaticamente (Dinheiro) para contabilização.");
-        }
-
-        // Reconstrói a lista de procedimentos incluindo a consulta se estiver marcada
-        // Filtra procedimentos vazios para não sujar o banco
+        // Filtra procedimentos vazios
         let finalProcedures = procedures.filter(p => p.name.trim() !== '' || p.value > 0);
-        
-        if (includeConsultation) {
-            finalProcedures.push({ name: 'Consulta', value: Number(consultationValue) });
-        }
 
+        // Prepara Lista de Pagamentos Final
+        let finalPaymentMethods = [...paymentMethods];
+
+        // CRÍTICO: Se tiver consulta, adiciona como um "Método de Pagamento" oculto
+        // para que o Financeiro e o Dashboard consigam "ler" no JSON e fazer o gráfico de Detalhamento
+        if (includeConsultation && financials.consultVal > 0) {
+            finalPaymentMethods.push({
+                method: 'Consulta', // Nome que aparecerá no gráfico
+                value: financials.consultVal,
+                installments: 1,
+                date: formData.date
+            });
+        }
+        
         onSave({
             ...formData,
             id: initialData?.id,
             patient_name_ref: patientName,
-            procedures_json: finalProcedures, // Envia lista unificada
+            procedures_json: finalProcedures, 
             materials_json: materials,
             payment_methods: finalPaymentMethods,
+            // Total Amount reflete apenas o serviço (procedimentos normais)
             total_amount: financials.totalService, 
             cost_amount: financials.totalMaterials,
             profit_amount: financials.profit, 
             discount_percent: 0, 
-            returns_to_create: returnsList
+            returns_to_create: returnsList,
+            // Campo auxiliar para o backend tratar a criação da parcela financeira da consulta
+            consultation_value: includeConsultation ? financials.consultVal : 0
         });
     };
 
@@ -672,12 +724,12 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                 <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
                                     <div className="flex justify-between items-center mb-2">
-                                        <Label className="font-bold uppercase text-xs text-stone-500 flex gap-2 items-center"><Syringe className="w-3 h-3"/> Procedimentos</Label>
+                                        <Label className="font-bold uppercase text-xs text-stone-500 flex gap-2 items-center"><Syringe className="w-3 h-3"/> Procedimentos (Serviço)</Label>
                                         <Button variant="ghost" size="sm" onClick={()=>setProcedures([...procedures, {name:'', value:0}])} className="text-xs text-blue-600">+ Adicionar</Button>
                                     </div>
 
-                                    {/* MODO CONSULTA SIMPLIFICADO */}
-                                    <div className="bg-blue-50/50 border border-blue-100 p-3 rounded-lg flex items-center gap-4 mb-4">
+                                    {/* MODO CONSULTA INDEPENDENTE */}
+                                    <div className="bg-blue-50/50 border border-blue-100 p-3 rounded-lg flex flex-col gap-2 mb-4">
                                         <div className="flex items-center space-x-2">
                                             <Checkbox 
                                                 id="consultation" 
@@ -685,12 +737,15 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                                 onCheckedChange={setIncludeConsultation}
                                             />
                                             <Label htmlFor="consultation" className="text-sm font-medium text-blue-900 cursor-pointer">
-                                                Cobrar Consulta?
+                                                Cobrar Consulta à Parte?
                                             </Label>
                                         </div>
                                         {includeConsultation && (
-                                            <div className="flex-1 max-w-[150px]">
-                                                <div className="relative">
+                                            <div className="pl-6">
+                                                <p className="text-[10px] text-blue-700 mb-1">
+                                                    Este valor será lançado <strong>automaticamente</strong> no financeiro (caixa) como recebido, independente do status do agendamento.
+                                                </p>
+                                                <div className="relative max-w-[150px]">
                                                     <span className="absolute left-2 top-1.5 text-xs text-stone-400">R$</span>
                                                     <Input 
                                                         className="h-8 pl-6 text-sm bg-white" 
@@ -739,7 +794,9 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                             </div>
 
                             <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
-                                <div className="flex justify-between items-center"><h4 className="text-xs font-bold text-stone-400 uppercase tracking-widest flex gap-2"><CreditCard className="w-4 h-4"/> Pagamentos</h4><Button size="sm" variant="outline" onClick={handleAddPayment} className="text-xs h-7">+ Adicionar Pagamento</Button></div>
+                                <div className="flex justify-between items-center"><h4 className="text-xs font-bold text-stone-400 uppercase tracking-widest flex gap-2"><CreditCard className="w-4 h-4"/> Pagamento dos Procedimentos</h4><Button size="sm" variant="outline" onClick={handleAddPayment} className="text-xs h-7">+ Adicionar Pagamento</Button></div>
+                                <p className="text-xs text-stone-500 italic">Lance aqui apenas o valor referente aos procedimentos. A consulta é cobrada à parte.</p>
+                                
                                 {paymentMethods.map((pm, i) => (
                                     <div key={i} className="flex flex-wrap gap-2 items-center bg-stone-50 p-2 rounded border border-stone-100">
                                         <Select value={pm.method} onValueChange={v => updatePayment(i, 'method', v)}><SelectTrigger className="w-44 h-8 text-xs"><SelectValue/></SelectTrigger><SelectContent>{PAYMENT_METHOD_OPTIONS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
@@ -763,7 +820,10 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                     </div>
                                 ))}
                                 
-                                <div className="flex justify-between items-center pt-2 border-t border-stone-100 text-sm"><span className="text-stone-500">Valor Serviço: <strong>R$ {financials.totalService.toFixed(2)}</strong></span><span className="text-emerald-600">Recebido (Liq): <strong>R$ {financials.totalPaidReal.toFixed(2)}</strong></span></div>
+                                <div className="flex justify-between items-center pt-2 border-t border-stone-100 text-sm">
+                                    <span className="text-stone-500">Total Procedimentos: <strong>R$ {financials.totalService.toFixed(2)}</strong></span>
+                                    <span className="text-emerald-600">Recebido/Lançado (Liq): <strong>R$ {financials.totalPaidReal.toFixed(2)}</strong></span>
+                                </div>
                             </div>
 
                             <div className="bg-stone-100 p-4 rounded-xl border border-dashed border-stone-300">
@@ -773,10 +833,30 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                             </div>
 
                             <div className="grid grid-cols-3 gap-4">
-                                <div className="bg-white p-4 rounded-xl border border-stone-200 text-center"><span className="text-[10px] font-bold text-stone-400 uppercase block">Receita Real</span><span className="text-xl font-light text-stone-800">R$ {financials.totalPaidReal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span></div>
-                                <div className="bg-white p-4 rounded-xl border border-stone-200 text-center"><span className="text-[10px] font-bold text-stone-400 uppercase block">Custo</span><span className="text-xl font-light text-red-600">- R$ {financials.totalMaterials.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span></div>
-                                <div className={`p-4 rounded-xl border text-center ${financials.profit >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}><span className={`text-[10px] font-bold uppercase block ${financials.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>Lucro</span><span className={`text-xl font-bold ${financials.profit >= 0 ? 'text-green-700' : 'text-red-700'}`}>R$ {financials.profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span></div>
+                                <div className="bg-white p-4 rounded-xl border border-stone-200 text-center"><span className="text-[10px] font-bold text-stone-400 uppercase block">Receita (Serviço)</span><span className="text-xl font-light text-stone-800">R$ {financials.totalPaidReal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span></div>
+                                <div className="bg-white p-4 rounded-xl border border-stone-200 text-center"><span className="text-[10px] font-bold text-stone-400 uppercase block">Custo Material</span><span className="text-xl font-light text-red-600">- R$ {financials.totalMaterials.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span></div>
+                                
+                                <div className={`p-4 rounded-xl border text-center ${financials.profit >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                                    <span className={`text-[10px] font-bold uppercase block ${financials.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        Lucro Est.
+                                    </span>
+                                    <span className={`text-xl font-bold ${financials.profit >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                                        R$ {financials.profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                    </span>
+                                </div>
                             </div>
+                            
+                            {/* Resumo da Consulta se Houver */}
+                            {includeConsultation && (
+                                <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl text-center">
+                                    <span className="text-xs font-bold text-blue-500 uppercase block">Consulta (Cobrança Automática)</span>
+                                    <span className="text-lg font-bold text-blue-700">
+                                        + R$ {financials.consultVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                    </span>
+                                    <p className="text-[10px] text-blue-400 mt-1">Este valor já foi contabilizado no caixa.</p>
+                                </div>
+                            )}
+
                         </div>
                     </ScrollArea>
 
