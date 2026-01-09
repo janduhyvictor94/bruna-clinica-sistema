@@ -405,6 +405,13 @@ export default function Financial() {
                                   <table className="w-full text-sm text-left min-w-[300px]">
                                       <thead className="text-xs text-stone-500 uppercase bg-stone-50"><tr><th className="px-4 py-2">Método</th><th className="px-4 py-2 text-center">Qtd</th><th className="px-4 py-2 text-right">Total Pago</th></tr></thead>
                                       <tbody>{paymentStats.map((stat, index) => (<tr key={index} className="border-b border-stone-100 hover:bg-stone-50"><td className="px-4 py-3 font-medium truncate max-w-[150px]">{stat.name}</td><td className="px-4 py-3 text-center">{stat.count}</td><td className="px-4 py-3 text-right">R$ {stat.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td></tr>))}</tbody>
+                                      <tfoot className="bg-stone-100 font-bold border-t border-stone-200 text-stone-800">
+                                          <tr>
+                                              <td className="px-4 py-3">TOTAL</td>
+                                              <td className="px-4 py-3 text-center">{paymentStats.reduce((acc, i) => acc + i.count, 0)}</td>
+                                              <td className="px-4 py-3 text-right">R$ {paymentStats.reduce((acc, i) => acc + i.total, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                          </tr>
+                                      </tfoot>
                                   </table>
                               </div>
                           </CardContent>
