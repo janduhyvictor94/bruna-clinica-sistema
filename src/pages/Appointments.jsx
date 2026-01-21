@@ -528,10 +528,11 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
         // Pagamentos Recebidos (Dos métodos lançados)
         let totalPaidReal = 0;
         paymentMethods.forEach(pm => {
-            const isCreditCard = CREDIT_METHODS.includes(pm.method);
             const isScheduled = pm.method === 'Agendamento de Pagamento';
             
-            if (!isScheduled && !isCreditCard) { 
+            // ALTERAÇÃO AQUI: Removemos !isCreditCard da condição.
+            // Agora Cartão de Crédito é contabilizado como "Pago" no display do modal.
+            if (!isScheduled) { 
                 const rawValue = Number(pm.value) || 0;
                 const discPercent = Number(pm.discount_percent) || 0;
                 const discountValue = rawValue * (discPercent / 100);
@@ -806,7 +807,8 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                         
                                         {CREDIT_METHODS.includes(pm.method) && (
                                             <Select value={pm.installments?.toString()} onValueChange={v => updatePayment(i, 'installments', v)}>
-                                                <SelectTrigger className="w-16 h-8 text-xs"><SelectValue/></SelectTrigger><SelectContent>{[1,2,3,4,5,6,10,12].map(n => <SelectItem key={n} value={n.toString()}>{n}x</SelectItem>)}</SelectContent></Select>
+                                                <SelectTrigger className="w-16 h-8 text-xs"><SelectValue/></SelectTrigger>
+                                                <SelectContent>{[1,2,3,4,5,6,7,8,9,10,11,12].map(n => <SelectItem key={n} value={n.toString()}>{n}x</SelectItem>)}</SelectContent></Select>
                                         )}
                                         
                                         {pm.method === 'Agendamento de Pagamento' && (

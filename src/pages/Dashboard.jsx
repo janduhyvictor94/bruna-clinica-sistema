@@ -586,7 +586,7 @@ export default function Dashboard() {
                         <Label>Dividir em quantas vezes?</Label>
                         <Select value={receiveInstallments.toString()} onValueChange={(v) => setReceiveInstallments(Number(v))}>
                             <SelectTrigger><SelectValue/></SelectTrigger>
-                            <SelectContent>{[1,2,3,4,5,6,10,12].map(n => <SelectItem key={n} value={n.toString()}>{n}x</SelectItem>)}</SelectContent>
+                            <SelectContent>{[1,2,3,4,5,6,7,8,9,10,11,12].map(n => <SelectItem key={n} value={n.toString()}>{n}x</SelectItem>)}</SelectContent>
                         </Select>
                     </div>
                 )}
