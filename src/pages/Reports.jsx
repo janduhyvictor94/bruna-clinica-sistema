@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Users, UserPlus, UserCheck, TrendingUp, DollarSign, Package, 
   FileText, ChevronLeft, ChevronRight, Syringe, Box, User, Clock, 
-  CheckCircle2, 
+  CheckCircle2, Printer, Download,
   History as HistoryIcon 
 } from 'lucide-react';
 import { startOfMonth, endOfMonth, isWithinInterval, parseISO, startOfYear, endOfYear, format, differenceInDays } from 'date-fns';
@@ -17,7 +17,9 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recha
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Badge } from '@/components/ui/badge'; // <--- Importação adicionada aqui
+import { Badge } from '@/components/ui/badge'; 
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 const COLORS = ['#c4a47c', '#78716c', '#d6d3d1', '#a8a29e', '#57534e', '#44403c'];
 const GENDER_COLORS = { 'Feminino': '#c4a47c', 'Masculino': '#57534e', 'Outro': '#d6d3d1' };
@@ -42,7 +44,18 @@ const calculatePatientReport = (patientId, allAppointments, allMovements) => {
     const materialsCount = {};
 
     patientAppointments.forEach(appt => {
-        totalInvestido += Number(appt.total_amount) || 0;
+        // CORREÇÃO: Total investido soma os pagamentos reais para incluir consulta
+        let apptTotal = 0;
+        if (appt.payment_methods_json && Array.isArray(appt.payment_methods_json)) {
+             apptTotal = appt.payment_methods_json.reduce((acc, pm) => {
+                 const val = Number(pm.value) || 0;
+                 const disc = Number(pm.discount_percent) || 0;
+                 return acc + (val - (val * (disc/100)));
+             }, 0);
+        } else {
+             apptTotal = Number(appt.total_amount) || 0;
+        }
+        totalInvestido += apptTotal;
         
         if (appt.procedures_json && Array.isArray(appt.procedures_json)) {
             appt.procedures_json.forEach(p => {
@@ -157,11 +170,247 @@ export default function Reports() {
   }, [selectedPatientId, appointments, stockMovements]);
 
 
+  // --- DADOS PARA O RELATÓRIO PDF (ABA NOVA) ---
+  const monthlyReportData = useMemo(() => {
+    // Filtra apenas por data e status realizado (ignora filtro de paciente individual da tela principal)
+    // Queremos TODOS os pacientes do mês
+    const list = appointments.filter(a => {
+        if(!a.date) return false;
+        const date = new Date(a.date + 'T00:00:00');
+        return isWithinInterval(date, { start, end }) && a.status && a.status.includes('Realizado');
+    });
+
+    const grouped = {};
+
+    list.forEach(appt => {
+        const pId = appt.patient_id;
+        if (!grouped[pId]) {
+            grouped[pId] = {
+                patient: appt.patients,
+                procedures: [],
+                payments: {}, // { 'Pix PF': 100, 'Cartão de Crédito PJ (6x)': 500 }
+                totalValue: 0,
+                totalCost: 0
+            };
+        }
+
+        // Add Procedures
+        if (appt.procedures_json && Array.isArray(appt.procedures_json)) {
+            appt.procedures_json.forEach(proc => {
+                grouped[pId].procedures.push({
+                    name: proc.name,
+                    date: appt.date,
+                    value: Number(proc.value) || 0
+                });
+            });
+        }
+
+        // CORREÇÃO: Soma custo de material do agendamento
+        grouped[pId].totalCost += Number(appt.cost_amount) || 0;
+
+        // Payment Methods aggregation (Soma o valor REALMENTE pago/lançado, incluindo consulta)
+        if (appt.payment_methods_json && Array.isArray(appt.payment_methods_json)) {
+            appt.payment_methods_json.forEach(pm => {
+                let method = pm.method || 'Outro';
+                
+                // NOVO: Adiciona a parcela ao nome do método se for Crédito e tiver parcelas > 1
+                if (CREDIT_METHODS.includes(method) && pm.installments && Number(pm.installments) > 1) {
+                    method = `${method} (${pm.installments}x)`;
+                }
+
+                const val = Number(pm.value) || 0;
+                // Subtrai desconto para mostrar valor líquido recebido
+                const disc = Number(pm.discount_percent) || 0;
+                const netVal = val - (val * (disc/100));
+                
+                grouped[pId].payments[method] = (grouped[pId].payments[method] || 0) + netVal;
+                
+                // CORREÇÃO: Soma ao total geral do paciente baseado nos pagamentos (para incluir consulta)
+                grouped[pId].totalValue += netVal;
+            });
+        } else {
+            // Fallback se não tiver payment_methods (antigos)
+            grouped[pId].totalValue += Number(appt.total_amount) || 0;
+        }
+    });
+
+    return Object.values(grouped).sort((a,b) => a.patient?.full_name.localeCompare(b.patient?.full_name));
+  }, [appointments, start, end]);
+
+  // --- FUNÇÃO GERAR PDF (LAYOUT MELHORADO + CUSTOS + PARCELAMENTO) ---
+  const generatePDF = () => {
+    const doc = new jsPDF();
+    
+    // Header
+    doc.setFillColor(28, 25, 23); // Stone 900
+    doc.rect(0, 0, 210, 20, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.text(`Relatório Contábil Detalhado - ${months[selectedMonth]}/${selectedYear}`, 14, 13);
+    
+    doc.setTextColor(100, 100, 100);
+    doc.setFontSize(10);
+    doc.text(`Gerado em: ${format(new Date(), 'dd/MM/yyyy HH:mm')}`, 14, 28);
+    
+    let yPos = 35;
+
+    monthlyReportData.forEach((item) => {
+        // Se estiver perto do fim da página, cria nova
+        if (yPos > 240) {
+            doc.addPage();
+            yPos = 20;
+        }
+
+        // Box do Paciente (AUMENTADO)
+        doc.setDrawColor(200, 200, 200);
+        doc.setFillColor(248, 248, 248); // Cinza bem claro
+        doc.rect(14, yPos, 182, 24, 'F'); 
+        
+        // Linha 1: Nome
+        doc.setFont(undefined, 'bold');
+        doc.setFontSize(11);
+        doc.setTextColor(0, 0, 0);
+        doc.text(`${item.patient?.full_name || 'Paciente Desconhecido'}`, 17, yPos + 6);
+        
+        doc.setFont(undefined, 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(60, 60, 60);
+        
+        const cpf = item.patient?.cpf || 'CPF não informado';
+        const phone = item.patient?.whatsapp || item.patient?.phone || 'Sem telefone';
+        const address = item.patient?.address || 'Endereço não informado';
+        
+        // Linha 2: CPF e Telefone
+        doc.text(`CPF: ${cpf}   |   Tel: ${phone}`, 17, yPos + 12);
+        
+        // Linha 3: Endereço
+        doc.setFont(undefined, 'bold');
+        doc.text('Endereço:', 17, yPos + 18);
+        doc.setFont(undefined, 'normal');
+        doc.text(address, 34, yPos + 18); 
+        
+        yPos += 30;
+
+        // Tabela de Procedimentos
+        const procRows = item.procedures.map(p => [
+            format(parseISO(p.date), 'dd/MM'),
+            p.name,
+            `R$ ${p.value.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`
+        ]);
+
+        autoTable(doc, {
+            startY: yPos,
+            head: [['Data', 'Procedimento', 'Valor Base']],
+            body: procRows,
+            theme: 'grid',
+            styles: { fontSize: 8, cellPadding: 1.5, lineColor: [220, 220, 220] }, 
+            headStyles: { fillColor: [87, 83, 78], textColor: 255, fontStyle: 'bold' }, 
+            columnStyles: { 0: { cellWidth: 25 }, 2: { halign: 'right', cellWidth: 35 } },
+            margin: { left: 16, right: 14 }
+        });
+        
+        yPos = doc.lastAutoTable.finalY + 6;
+
+        // --- SEÇÃO FINANCEIRA (SEM SOBREPOSIÇÃO) ---
+        
+        // 1. Lista de Pagamentos
+        doc.setFontSize(9);
+        doc.setFont(undefined, 'bold');
+        doc.setTextColor(0, 0, 0);
+        doc.text('Formas de Pagamento:', 16, yPos);
+        
+        doc.setFont(undefined, 'normal');
+        doc.setTextColor(60, 60, 60);
+        
+        let paymentText = [];
+        Object.entries(item.payments).forEach(([method, val]) => {
+            paymentText.push(`${method}: R$ ${val.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`);
+        });
+        
+        const splitPaymentText = doc.splitTextToSize(paymentText.join('  |  '), 180); // Largura total
+        doc.text(splitPaymentText, 16, yPos + 5);
+        
+        // Atualiza Y baseado na altura do texto de pagamentos
+        yPos += 5 + (splitPaymentText.length * 4) + 4;
+
+        // 2. Resumo de Valores (Totais)
+        const lucro = item.totalValue - item.totalCost;
+        
+        // Linha Cinza Fina separadora
+        doc.setDrawColor(230, 230, 230);
+        doc.line(16, yPos, 196, yPos);
+        yPos += 5;
+
+        // Coluna da Direita para Totais
+        const startXValues = 140; 
+        
+        // Total Receita (Incluindo Consulta)
+        doc.setFont(undefined, 'bold');
+        doc.setTextColor(0, 0, 0);
+        doc.text('Receita Total:', startXValues, yPos);
+        doc.text(`R$ ${item.totalValue.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`, 196, yPos, { align: 'right' });
+        
+        // Custo Material
+        yPos += 5;
+        doc.setFont(undefined, 'normal');
+        doc.setTextColor(180, 50, 50); // Vermelho
+        doc.text('(-) Custo Material:', startXValues, yPos);
+        doc.text(`R$ ${item.totalCost.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`, 196, yPos, { align: 'right' });
+        
+        // Lucro
+        yPos += 6;
+        doc.setFont(undefined, 'bold');
+        doc.setTextColor(21, 128, 61); // Verde
+        doc.text('Resultado Líquido:', startXValues, yPos);
+        doc.text(`R$ ${lucro.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`, 196, yPos, { align: 'right' });
+
+        // Espaço para o próximo
+        yPos += 12;
+        doc.setDrawColor(200, 200, 200);
+        doc.setLineWidth(0.5);
+        doc.line(14, yPos - 6, 196, yPos - 6); // Linha forte separadora entre pacientes
+    });
+
+    // Footer Total Geral
+    const grandTotalRevenue = monthlyReportData.reduce((acc, curr) => acc + curr.totalValue, 0);
+    const grandTotalCost = monthlyReportData.reduce((acc, curr) => acc + curr.totalCost, 0);
+    const grandTotalProfit = grandTotalRevenue - grandTotalCost;
+    const totalPatients = monthlyReportData.length;
+    
+    doc.addPage();
+    doc.setFillColor(245, 245, 245);
+    doc.rect(0, 0, 210, 50, 'F'); // Fundo cabeçalho
+    
+    doc.setFontSize(16);
+    doc.setTextColor(0,0,0);
+    doc.text("Resumo Financeiro do Mês (Contábil)", 14, 20);
+    
+    doc.setFontSize(11);
+    doc.text(`Total de Pacientes Atendidos: ${totalPatients}`, 14, 35);
+    
+    doc.text(`Receita Bruta Total:`, 14, 45);
+    doc.setFont(undefined, 'bold');
+    doc.text(`R$ ${grandTotalRevenue.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`, 60, 45);
+    
+    doc.setFont(undefined, 'normal');
+    doc.text(`Custo Material Total:`, 14, 52);
+    doc.setTextColor(180, 50, 50);
+    doc.text(`- R$ ${grandTotalCost.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`, 60, 52);
+    
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(0, 0, 0);
+    doc.text(`Lucro Líquido Total:`, 14, 62);
+    doc.setTextColor(21, 128, 61);
+    doc.setFontSize(14);
+    doc.text(`R$ ${grandTotalProfit.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`, 60, 62);
+
+    doc.save(`Relatorio_Contabil_${selectedMonth+1}_${selectedYear}.pdf`);
+  };
+
+
   // --- CÁLCULO DE RECEITA (REGIME DE CAIXA - IGUAL DASHBOARD) ---
   const revenueCalculations = useMemo(() => {
-      // A. Recebimentos à vista (Entrada imediata nos agendamentos do período)
-      // Agendamentos devem estar no período E ter status Realizado
-      // Se houver paciente selecionado, filtra por ele.
+      // A. Recebimentos à vista
       const cashAppointments = appointments.filter(a => {
           const date = new Date(a.date + 'T00:00:00');
           const isDateIn = isWithinInterval(date, { start, end });
@@ -172,8 +421,6 @@ export default function Reports() {
 
       const cashFromAppointments = cashAppointments.reduce((sum, appt) => {
           const methods = appt.payment_methods_json || [];
-          // Soma apenas o que NÃO gera parcela (Dinheiro, Pix, Débito...)
-          // Crédito e Agendamento vão para a tabela installments
           const cashPart = methods
               .filter(m => {
                   const method = m.method || '';
@@ -188,17 +435,14 @@ export default function Reports() {
           return sum + cashPart;
       }, 0);
 
-      // B. Recebimentos de Parcelas (Tabela installments)
-      // Parcelas onde 'received_date' cai no período
+      // B. Recebimentos de Parcelas
       const receivedInstallments = installments.filter(i => {
           if (!i.is_received || !i.received_date) return false;
           const rDate = parseISO(i.received_date);
           const isDateIn = isWithinInterval(rDate, { start, end });
           
-          // Filtro de Paciente nas Parcelas
           let isPatientMatch = true;
           if (selectedPatientId) {
-             // Tenta pegar do join ou, se não tiver, tenta achar o agendamento pai na lista de appointments
              const parentAppt = i.appointments || appointments.find(a => a.id === i.appointment_id);
              if (parentAppt && parentAppt.patient_id !== selectedPatientId) {
                  isPatientMatch = false;
@@ -245,10 +489,10 @@ export default function Reports() {
   // Custo Variável
   const totalMaterialCost = filteredMovements.reduce((sum, m) => sum + (Number(m.total_cost) || 0), 0);
   
-  // Receita (Agora via Regime de Caixa)
+  // Receita
   const totalRevenue = revenueCalculations;
 
-  // Despesas Operacionais (Fixo)
+  // Despesas Operacionais
   const filteredExpenses = expenses.filter(e => {
       if(!e.due_date || !e.is_paid) return false;
       const date = parseISO(e.due_date);
@@ -377,11 +621,12 @@ export default function Reports() {
       </div>
 
       <Tabs defaultValue="overview">
-        <TabsList className="bg-stone-100 w-full sm:w-auto grid grid-cols-2 sm:flex">
+        <TabsList className="bg-stone-100 w-full sm:w-auto grid grid-cols-2 sm:flex flex-wrap h-auto">
             <TabsTrigger value="overview">Visão Geral</TabsTrigger>
             <TabsTrigger value="patient">Por Paciente</TabsTrigger>
             <TabsTrigger value="procedures">Por Procedimento</TabsTrigger>
             <TabsTrigger value="materials">Por Material</TabsTrigger>
+            <TabsTrigger value="detailed_report" className="flex items-center gap-2"><FileText className="w-4 h-4"/> Relatório Mensal</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-6 space-y-6">
@@ -652,6 +897,60 @@ export default function Reports() {
                             ))}
                         </tbody>
                     </table>
+                </CardContent>
+            </Card>
+        </TabsContent>
+
+        <TabsContent value="detailed_report" className="mt-6 space-y-4">
+            <div className="bg-white p-6 rounded-xl border border-stone-200 text-center space-y-4">
+                <div className="mx-auto w-12 h-12 bg-stone-100 rounded-full flex items-center justify-center">
+                    <Printer className="w-6 h-6 text-stone-600"/>
+                </div>
+                <div>
+                    <h3 className="text-lg font-bold text-stone-800">Relatório Mensal de Procedimentos</h3>
+                    <p className="text-sm text-stone-500 max-w-md mx-auto">
+                        Gere um arquivo PDF completo contendo a lista de todos os pacientes atendidos em <strong>{months[selectedMonth]} de {selectedYear}</strong>, 
+                        com detalhes de procedimentos, valores pagos, formas de pagamento e dados cadastrais (CPF, Endereço, Whatsapp).
+                    </p>
+                </div>
+                
+                <div className="flex justify-center gap-4 pt-2">
+                    <Button onClick={generatePDF} className="bg-stone-900 text-white shadow-lg hover:bg-stone-800">
+                        <Download className="w-4 h-4 mr-2"/> Baixar PDF Completo
+                    </Button>
+                </div>
+            </div>
+
+            <Card className="bg-white border-stone-100">
+                <CardHeader className="pb-2 border-b border-stone-50"><CardTitle className="text-sm font-medium text-stone-700">Prévia da Lista ({monthlyReportData.length} pacientes)</CardTitle></CardHeader>
+                <CardContent className="p-0">
+                    <ScrollArea className="h-[400px]">
+                        <table className="w-full text-sm text-left">
+                            <thead className="text-xs text-stone-500 uppercase bg-stone-50 sticky top-0 z-10">
+                                <tr>
+                                    <th className="px-4 py-3">Paciente</th>
+                                    <th className="px-4 py-3">Procedimentos</th>
+                                    <th className="px-4 py-3 text-right">Total Pago</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-stone-100">
+                                {monthlyReportData.map((item, i) => (
+                                    <tr key={i} className="hover:bg-stone-50">
+                                        <td className="px-4 py-3">
+                                            <p className="font-bold text-stone-800">{item.patient?.full_name}</p>
+                                            <p className="text-xs text-stone-400">{item.patient?.cpf || 'CPF N/D'}</p>
+                                        </td>
+                                        <td className="px-4 py-3 text-xs text-stone-600">
+                                            {item.procedures.map(p => p.name).join(', ')}
+                                        </td>
+                                        <td className="px-4 py-3 text-right font-medium text-emerald-700">
+                                            R$ {item.totalValue.toLocaleString('pt-BR', {minimumFractionDigits: 2})}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </ScrollArea>
                 </CardContent>
             </Card>
         </TabsContent>
