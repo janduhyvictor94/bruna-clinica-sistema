@@ -102,17 +102,20 @@ export default function Appointments() {
     mutationFn: async (data) => {
         const { id, returns_to_create, consultation_value, ...rawData } = data;
         
+        // Função auxiliar para limpar campos de hora vazios
+        const sanitizeTime = (t) => (t && t.trim() !== '') ? t : null;
+
         // Separação clara: O total_amount salvo no agendamento refere-se ao serviço principal
         const payload = {
             patient_id: rawData.patient_id,
             date: rawData.date,
-            time: rawData.time,
-            end_time: rawData.end_time,
+            time: sanitizeTime(rawData.time),
+            end_time: sanitizeTime(rawData.end_time),
             status: rawData.status,
             type: rawData.type,
             service_type_custom: rawData.service_type_custom,
             notes: rawData.notes,
-            payment_methods_json: rawData.payment_methods, // Agora inclui a consulta para fins de relatório
+            payment_methods_json: rawData.payment_methods, 
             procedures_json: rawData.procedures_json, 
             materials_json: rawData.materials_json,
             total_amount: Number(rawData.total_amount) || 0,
@@ -271,15 +274,38 @@ export default function Appointments() {
             }
         }
 
+        // --- RETORNOS AUTOMÁTICOS (CORREÇÃO APLICADA) ---
         if (returns_to_create && returns_to_create.length > 0) {
-            const returnsPayload = returns_to_create.map(ret => ({
-                patient_id: payload.patient_id,
-                date: ret.date,
-                notes: `Retorno Automático: ${ret.note || ''}`,
-                status: 'Agendado',
-                type: 'Recorrente'
-            }));
-            await supabase.from('appointments').insert(returnsPayload);
+            const returnsPayload = returns_to_create.map(ret => {
+                // Determina o horário: prioridade para o horário do retorno, depois o original, depois 09:00
+                const returnTime = sanitizeTime(ret.time) || sanitizeTime(payload.time) || '09:00';
+                
+                return {
+                    patient_id: payload.patient_id,
+                    date: ret.date,
+                    time: returnTime, 
+                    end_time: sanitizeTime(payload.end_time), // Usa o mesmo fim ou null para evitar erro
+                    notes: `Retorno Automático: ${ret.note || ''}`,
+                    status: 'Agendado',
+                    type: 'Recorrente',
+                    service_type_custom: 'Retorno',
+                    
+                    // Campos padrão para evitar erros de NOT NULL ou cálculos no frontend
+                    payment_methods_json: [],
+                    procedures_json: [],
+                    materials_json: [],
+                    total_amount: 0,
+                    cost_amount: 0,
+                    profit_amount: 0,
+                    discount_percent: 0
+                };
+            });
+            
+            const { error: returnError } = await supabase.from('appointments').insert(returnsPayload);
+            if (returnError) {
+                console.error("Erro ao criar retornos:", returnError);
+                throw new Error("Erro ao criar retornos: " + returnError.message);
+            }
         }
     },
     onSuccess: () => {
@@ -288,7 +314,7 @@ export default function Appointments() {
       setEditingAppointment(null);
       toast.success('Salvo e sincronizado!');
     },
-    onError: (e) => toast.error('Erro ao salvar: ' + e.message)
+    onError: (e) => toast.error(e.message)
   });
 
   const deleteMutation = useMutation({
@@ -315,7 +341,7 @@ export default function Appointments() {
       <div className="flex flex-col sm:flex-row gap-4 max-w-4xl">
           <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-stone-400 w-4 h-4" />
-              <Input placeholder="Buscar paciente..." className="pl-10 bg-white border-stone-200 rounded-full shadow-sm" value={search} onChange={(e) => setSearchTerm(e.target.value)}/>
+              <Input placeholder="Buscar paciente..." className="pl-10 bg-white border-stone-200 rounded-full shadow-sm" value={search} onChange={(e) => setSearch(e.target.value)}/>
           </div>
           
           <div className="flex items-center gap-2 bg-white border border-stone-200 rounded-full px-3 py-1 shadow-sm w-full sm:w-auto">
@@ -394,8 +420,11 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
     const [procedures, setProcedures] = useState([{ name: '', value: 0 }]);
     const [materials, setMaterials] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState([]);
+    
+    // RETORNOS
     const [returnsList, setReturnsList] = useState([]);
     const [newReturnDate, setNewReturnDate] = useState('');
+    const [newReturnTime, setNewReturnTime] = useState(''); // NOVO: Estado para hora do retorno
     const [newReturnNote, setNewReturnNote] = useState('');
     
     // ESTADOS PARA CONSULTA (Alterado)
@@ -494,6 +523,7 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                 setPatientSearch('');
             }
             setNewReturnDate('');
+            setNewReturnTime('');
             setNewReturnNote('');
             setShowPatientList(false);
         }
@@ -589,7 +619,15 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
         });
     };
 
-    const handleAddReturn = () => { if (!newReturnDate) return toast.error("Selecione data"); setReturnsList([...returnsList, { date: newReturnDate, note: newReturnNote }]); setNewReturnDate(''); setNewReturnNote(''); };
+    const handleAddReturn = () => { 
+        if (!newReturnDate) return toast.error("Selecione data"); 
+        // Adiciona a hora e a nota
+        setReturnsList([...returnsList, { date: newReturnDate, time: newReturnTime, note: newReturnNote }]); 
+        setNewReturnDate(''); 
+        setNewReturnTime(''); 
+        setNewReturnNote(''); 
+    };
+    
     const handleAddPayment = () => { setPaymentMethods([...paymentMethods, { method: 'Pix PF', value: 0, installments: 1, discount_percent: 0, scheduled_date: '' }]); };
     const updatePayment = (index, field, value) => { 
         const newMethods = [...paymentMethods]; 
@@ -830,8 +868,31 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
 
                             <div className="bg-stone-100 p-4 rounded-xl border border-dashed border-stone-300">
                                 <Label className="font-bold flex items-center gap-2 mb-3 text-stone-600"><Calendar className="w-4 h-4"/> Criar Retornos</Label>
-                                <div className="flex gap-2 items-end mb-2"><div className="w-1/3"><Input type="date" className="bg-white h-9" value={newReturnDate} onChange={e => setNewReturnDate(e.target.value)}/></div><div className="flex-1"><Input placeholder="Obs..." className="bg-white h-9" value={newReturnNote} onChange={e => setNewReturnNote(e.target.value)}/></div><Button size="sm" className="bg-stone-800 h-9" onClick={handleAddReturn}><Plus className="w-4 h-4 mr-1"/> Adicionar</Button></div>
-                                <div className="space-y-1">{returnsList.map((r,idx)=><div key={idx} className="text-xs p-2 bg-white rounded border border-stone-200 flex justify-between items-center shadow-sm"><span><strong>{format(parseISO(r.date), 'dd/MM')}</strong> - {r.note}</span><X className="w-3 h-3 cursor-pointer text-red-400" onClick={()=>setReturnsList(returnsList.filter((_,ix)=>ix!==idx))}/></div>)}</div>
+                                <div className="flex gap-2 items-end mb-2">
+                                    <div className="w-[140px]">
+                                        <Label className="text-[10px] text-stone-500 mb-1 block">Data</Label>
+                                        <Input type="date" className="bg-white h-9" value={newReturnDate} onChange={e => setNewReturnDate(e.target.value)}/>
+                                    </div>
+                                    <div className="w-[100px]">
+                                        <Label className="text-[10px] text-stone-500 mb-1 block">Hora</Label>
+                                        <Input type="time" className="bg-white h-9" value={newReturnTime} onChange={e => setNewReturnTime(e.target.value)}/>
+                                    </div>
+                                    <div className="flex-1">
+                                        <Label className="text-[10px] text-stone-500 mb-1 block">Observação</Label>
+                                        <Input placeholder="Ex: Retorno 15 dias" className="bg-white h-9" value={newReturnNote} onChange={e => setNewReturnNote(e.target.value)}/>
+                                    </div>
+                                    <Button size="sm" className="bg-stone-800 h-9 mb-[1px]" onClick={handleAddReturn}>
+                                        <Plus className="w-4 h-4 mr-1"/> Adicionar
+                                    </Button>
+                                </div>
+                                <div className="space-y-1">
+                                    {returnsList.map((r,idx)=>(
+                                        <div key={idx} className="text-xs p-2 bg-white rounded border border-stone-200 flex justify-between items-center shadow-sm">
+                                            <span><strong>{format(parseISO(r.date), 'dd/MM')} às {r.time || '09:00'}</strong> - {r.note}</span>
+                                            <X className="w-3 h-3 cursor-pointer text-red-400" onClick={()=>setReturnsList(returnsList.filter((_,ix)=>ix!==idx))}/>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
 
                             <div className="grid grid-cols-3 gap-4">
