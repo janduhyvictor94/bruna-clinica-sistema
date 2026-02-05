@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Search, Plus, Calendar, User, FileText, ChevronDown, ChevronUp, History, CreditCard, X, Trash2, Syringe, Package, Check, Filter, Phone } from 'lucide-react';
 import { toast } from 'sonner';
-import { format, parseISO, addMonths } from 'date-fns';
+import { format, parseISO, addMonths, addMinutes } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -102,10 +102,8 @@ export default function Appointments() {
     mutationFn: async (data) => {
         const { id, returns_to_create, consultation_value, ...rawData } = data;
         
-        // Função auxiliar para limpar campos de hora vazios
         const sanitizeTime = (t) => (t && t.trim() !== '') ? t : null;
 
-        // Separação clara: O total_amount salvo no agendamento refere-se ao serviço principal
         const payload = {
             patient_id: rawData.patient_id,
             date: rawData.date,
@@ -150,7 +148,6 @@ export default function Appointments() {
         // 2. CONSULTA (Cobrança Automática e Independente)
         // Se houver valor de consulta, cria um installment recebido IMEDIATAMENTE.
         if (consultation_value > 0) {
-            // CRÍTICO: Aqui adicionamos 'method': 'Consulta' para aparecer no Detalhamento de Entradas
             await supabase.from('installments').insert([{
                 appointment_id: apptId,
                 patient_name: rawData.patient_name_ref || 'Paciente',
@@ -160,7 +157,7 @@ export default function Appointments() {
                 due_date: payload.date, 
                 is_received: true,      
                 received_date: payload.date,
-                method: 'Consulta' // Garante que o Financeiro categorize corretamente
+                method: 'Consulta' 
             }]);
         }
 
@@ -205,7 +202,6 @@ export default function Appointments() {
             
             if (rawData.payment_methods && rawData.payment_methods.length > 0) {
                 rawData.payment_methods.forEach(pm => {
-                    // PULA A CONSULTA aqui para não duplicar, pois já inserimos manualmente acima com is_received=true
                     if (pm.method === 'Consulta') return;
 
                     const totalVal = Number(pm.value) || 0;
@@ -225,9 +221,9 @@ export default function Appointments() {
                             total_installments: numInstallments, 
                             value: totalVal, 
                             due_date: pm.scheduled_date, 
-                            is_received: false, 
+                            is_received: false, // GARANTE QUE NÃO ESTÁ PAGO
                             received_date: null,
-                            method: pm.method // Salva o método para o detalhamento
+                            method: pm.method 
                         });
                     }
                     else if (isCreditCard) {
@@ -252,7 +248,6 @@ export default function Appointments() {
                             });
                         }
                     } else {
-                        // Pagamentos à vista normais (Dinheiro, Pix, etc)
                          installmentsPayload.push({
                             appointment_id: apptId,
                             patient_name: rawData.patient_name_ref || 'Paciente',
@@ -274,23 +269,31 @@ export default function Appointments() {
             }
         }
 
-        // --- RETORNOS AUTOMÁTICOS (CORREÇÃO APLICADA) ---
         if (returns_to_create && returns_to_create.length > 0) {
             const returnsPayload = returns_to_create.map(ret => {
-                // Determina o horário: prioridade para o horário do retorno, depois o original, depois 09:00
                 const returnTime = sanitizeTime(ret.time) || sanitizeTime(payload.time) || '09:00';
                 
+                let returnEndTime = sanitizeTime(ret.end_time);
+                
+                if (!returnEndTime) {
+                    try {
+                        const startObj = parseISO(`${ret.date}T${returnTime}`);
+                        const endObj = addMinutes(startObj, 30); 
+                        returnEndTime = format(endObj, 'HH:mm');
+                    } catch (e) {
+                        console.error("Erro ao calcular hora final do retorno", e);
+                    }
+                }
+
                 return {
                     patient_id: payload.patient_id,
                     date: ret.date,
                     time: returnTime, 
-                    end_time: sanitizeTime(payload.end_time), // Usa o mesmo fim ou null para evitar erro
+                    end_time: returnEndTime, 
                     notes: `Retorno Automático: ${ret.note || ''}`,
                     status: 'Agendado',
                     type: 'Recorrente',
                     service_type_custom: 'Retorno',
-                    
-                    // Campos padrão para evitar erros de NOT NULL ou cálculos no frontend
                     payment_methods_json: [],
                     procedures_json: [],
                     materials_json: [],
@@ -424,7 +427,8 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
     // RETORNOS
     const [returnsList, setReturnsList] = useState([]);
     const [newReturnDate, setNewReturnDate] = useState('');
-    const [newReturnTime, setNewReturnTime] = useState(''); // NOVO: Estado para hora do retorno
+    const [newReturnTime, setNewReturnTime] = useState(''); 
+    const [newReturnEndTime, setNewReturnEndTime] = useState('');
     const [newReturnNote, setNewReturnNote] = useState('');
     
     // ESTADOS PARA CONSULTA (Alterado)
@@ -470,16 +474,10 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                     notes: initialData.notes || ''
                 });
                 
-                // Procedimentos normais - Filtrando "Consulta" se ela tiver sido salva acidentalmente como procedimento no passado
                 const loadedProcedures = Array.isArray(initialData.procedures_json) ? initialData.procedures_json : [];
-                // A "Consulta" pode estar salva como procedimento (versão antiga) OU como método de pagamento (versão nova)
-                // Vamos checar o método de pagamento primeiro
                 const loadedMethods = Array.isArray(initialData.payment_methods_json) ? initialData.payment_methods_json : [];
                 
-                // Procura a Consulta nos Métodos de Pagamento (Nova lógica)
                 const consultationMethod = loadedMethods.find(m => m.method === 'Consulta');
-                
-                // Procura a Consulta nos Procedimentos (Retrocompatibilidade)
                 const consultationProc = loadedProcedures.find(p => p.name === 'Consulta');
 
                 if (consultationMethod) {
@@ -493,7 +491,6 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                     setConsultationValue(0);
                 }
 
-                // Limpa a "Consulta" das listas visuais para não duplicar
                 const visibleProcedures = loadedProcedures.filter(p => p.name !== 'Consulta');
                 const visibleMethods = loadedMethods.filter(m => m.method !== 'Consulta');
 
@@ -524,6 +521,7 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
             }
             setNewReturnDate('');
             setNewReturnTime('');
+            setNewReturnEndTime('');
             setNewReturnNote('');
             setShowPatientList(false);
         }
@@ -545,29 +543,22 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
         setConsultationValue(Number(rawValue) / 100);
     };
 
-    // Cálculos Financeiros Atualizados
+    // --- CORREÇÃO DO CÁLCULO FINANCEIRO ---
     const financials = useMemo(() => {
-        // Total Serviço = Apenas procedimentos
         const totalService = procedures.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
-        
-        // Valor da Consulta separado
         const consultVal = includeConsultation ? (Number(consultationValue) || 0) : 0;
-        
         const totalMaterials = materials.reduce((acc, curr) => acc + ((Number(curr.cost) || 0) * (Number(curr.quantity) || 1)), 0);
         
-        // Pagamentos Recebidos (Dos métodos lançados)
         let totalPaidReal = 0;
         paymentMethods.forEach(pm => {
-            const isScheduled = pm.method === 'Agendamento de Pagamento';
+            // CORREÇÃO CRÍTICA: Se for agendamento, NÃO soma no realizado
+            if (pm.method === 'Agendamento de Pagamento') return;
+
+            const rawValue = Number(pm.value) || 0;
+            const discPercent = Number(pm.discount_percent) || 0;
+            const discountValue = rawValue * (discPercent / 100);
             
-            // ALTERAÇÃO AQUI: Removemos !isCreditCard da condição.
-            // Agora Cartão de Crédito é contabilizado como "Pago" no display do modal.
-            if (!isScheduled) { 
-                const rawValue = Number(pm.value) || 0;
-                const discPercent = Number(pm.discount_percent) || 0;
-                const discountValue = rawValue * (discPercent / 100);
-                totalPaidReal += (rawValue - discountValue);
-            }
+            totalPaidReal += (rawValue - discountValue);
         });
         
         const profit = totalPaidReal - totalMaterials;
@@ -584,17 +575,12 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
             return toast.error("A data de Vencimento é obrigatória para Agendamento de Pagamento.");
         }
 
-        // Filtra procedimentos vazios
         let finalProcedures = procedures.filter(p => p.name.trim() !== '' || p.value > 0);
-
-        // Prepara Lista de Pagamentos Final
         let finalPaymentMethods = [...paymentMethods];
 
-        // CRÍTICO: Se tiver consulta, adiciona como um "Método de Pagamento" oculto
-        // para que o Financeiro e o Dashboard consigam "ler" no JSON e fazer o gráfico de Detalhamento
         if (includeConsultation && financials.consultVal > 0) {
             finalPaymentMethods.push({
-                method: 'Consulta', // Nome que aparecerá no gráfico
+                method: 'Consulta', 
                 value: financials.consultVal,
                 installments: 1,
                 date: formData.date
@@ -608,23 +594,21 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
             procedures_json: finalProcedures, 
             materials_json: materials,
             payment_methods: finalPaymentMethods,
-            // Total Amount reflete apenas o serviço (procedimentos normais)
             total_amount: financials.totalService, 
             cost_amount: financials.totalMaterials,
             profit_amount: financials.profit, 
             discount_percent: 0, 
             returns_to_create: returnsList,
-            // Campo auxiliar para o backend tratar a criação da parcela financeira da consulta
             consultation_value: includeConsultation ? financials.consultVal : 0
         });
     };
 
     const handleAddReturn = () => { 
         if (!newReturnDate) return toast.error("Selecione data"); 
-        // Adiciona a hora e a nota
-        setReturnsList([...returnsList, { date: newReturnDate, time: newReturnTime, note: newReturnNote }]); 
+        setReturnsList([...returnsList, { date: newReturnDate, time: newReturnTime, end_time: newReturnEndTime, note: newReturnNote }]); 
         setNewReturnDate(''); 
         setNewReturnTime(''); 
+        setNewReturnEndTime('');
         setNewReturnNote(''); 
     };
     
@@ -699,7 +683,6 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                             className="mt-1"
                                         />
                                         
-                                        {/* WHATSAPP DO PACIENTE */}
                                         {selectedPatient && (
                                             <div className="flex items-center gap-2 mt-1 ml-1">
                                                 <Phone className="w-3 h-3 text-emerald-600" />
@@ -731,7 +714,6 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
                                         <div><Label>Data</Label><Input type="date" value={formData.date || ''} onChange={e => setFormData({...formData, date: e.target.value})}/></div>
-                                        {/* HORÁRIOS INÍCIO E FIM */}
                                         <div className="flex gap-2">
                                             <div className="flex-1">
                                                 <Label>Hora Início</Label>
@@ -767,7 +749,6 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                         <Button variant="ghost" size="sm" onClick={()=>setProcedures([...procedures, {name:'', value:0}])} className="text-xs text-blue-600">+ Adicionar</Button>
                                     </div>
 
-                                    {/* MODO CONSULTA INDEPENDENTE */}
                                     <div className="bg-blue-50/50 border border-blue-100 p-3 rounded-lg flex flex-col gap-2 mb-4">
                                         <div className="flex items-center space-x-2">
                                             <Checkbox 
@@ -874,8 +855,12 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                         <Input type="date" className="bg-white h-9" value={newReturnDate} onChange={e => setNewReturnDate(e.target.value)}/>
                                     </div>
                                     <div className="w-[100px]">
-                                        <Label className="text-[10px] text-stone-500 mb-1 block">Hora</Label>
+                                        <Label className="text-[10px] text-stone-500 mb-1 block">Início</Label>
                                         <Input type="time" className="bg-white h-9" value={newReturnTime} onChange={e => setNewReturnTime(e.target.value)}/>
+                                    </div>
+                                    <div className="w-[100px]">
+                                        <Label className="text-[10px] text-stone-500 mb-1 block">Fim</Label>
+                                        <Input type="time" className="bg-white h-9" value={newReturnEndTime} onChange={e => setNewReturnEndTime(e.target.value)}/>
                                     </div>
                                     <div className="flex-1">
                                         <Label className="text-[10px] text-stone-500 mb-1 block">Observação</Label>
@@ -888,7 +873,7 @@ export function AppointmentModal({ open, onOpenChange, initialData, onSave, onDe
                                 <div className="space-y-1">
                                     {returnsList.map((r,idx)=>(
                                         <div key={idx} className="text-xs p-2 bg-white rounded border border-stone-200 flex justify-between items-center shadow-sm">
-                                            <span><strong>{format(parseISO(r.date), 'dd/MM')} às {r.time || '09:00'}</strong> - {r.note}</span>
+                                            <span><strong>{format(parseISO(r.date), 'dd/MM')} das {r.time || '??:??'} às {r.end_time || '??:??'}</strong> - {r.note}</span>
                                             <X className="w-3 h-3 cursor-pointer text-red-400" onClick={()=>setReturnsList(returnsList.filter((_,ix)=>ix!==idx))}/>
                                         </div>
                                     ))}

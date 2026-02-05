@@ -33,23 +33,18 @@ export default function Layout({ currentPageName }) {
   useEffect(() => {
     const checkPendingPayments = async () => {
         const today = startOfDay(new Date());
-        const next7Days = endOfDay(addDays(today, 7));
+        const next30Days = endOfDay(addDays(today, 30));
         
-        // Busca todas as parcelas não recebidas que vencem em breve (até 7 dias)
+        // Busca TODAS as parcelas não recebidas que vencem em breve (até 30 dias)
+        // Sem filtro de método, para garantir que nada passe batido
         const { data: installments } = await supabase
             .from('installments')
-            .select('due_date, appointments(payment_methods_json)')
+            .select('due_date, is_received')
             .eq('is_received', false)
-            .lte('due_date', next7Days.toISOString());
+            .lte('due_date', next30Days.toISOString());
             
         if (installments) {
-            // CORREÇÃO: Filtra pelo nome correto 'Agendamento de Pagamento'
-            const count = installments.filter(i => {
-                const methods = i.appointments?.payment_methods_json || [];
-                return methods.some(m => m.method === 'Agendamento de Pagamento');
-            }).length;
-            
-            setPendingPaymentsCount(count);
+            setPendingPaymentsCount(installments.length);
         }
     };
 

@@ -14,7 +14,7 @@ import {
 import { 
   format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, 
   addDays, isSameMonth, isSameDay, addMonths, subMonths, 
-  parseISO 
+  parseISO, addMinutes 
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { AppointmentModal } from './Appointments';
@@ -178,6 +178,9 @@ export default function Schedule() {
         await supabase.from('appointments').delete().eq('id', id);
         queryClient.invalidateQueries();
         toast.success('Atendimento excluído');
+        
+        setIsModalOpen(false);
+        setEditingAppointment(null);
     } catch (error) { toast.error(error.message); }
   };
 
@@ -198,15 +201,62 @@ export default function Schedule() {
         const profit = totalPaidReal - totalMaterials;
         
         const payload = {
-            patient_id: rawData.patient_id, date: rawData.date, time: rawData.time, status: rawData.status,
-            type: rawData.type, notes: rawData.notes, service_type_custom: rawData.service_type_custom, 
-            payment_methods_json: rawData.payment_methods, procedures_json: rawData.procedures_json, 
-            materials_json: rawData.materials_json, total_amount: Number(rawData.total_amount)||0, 
-            cost_amount: Number(rawData.cost_amount)||0, profit_amount: profit, discount_percent: Number(rawData.discount_percent)||0
+            patient_id: rawData.patient_id, 
+            date: rawData.date, 
+            time: rawData.time, 
+            end_time: rawData.end_time,
+            status: rawData.status,
+            type: rawData.type, 
+            notes: rawData.notes, 
+            service_type_custom: rawData.service_type_custom, 
+            payment_methods_json: rawData.payment_methods, 
+            procedures_json: rawData.procedures_json, 
+            materials_json: rawData.materials_json, 
+            total_amount: Number(rawData.total_amount)||0, 
+            cost_amount: Number(rawData.cost_amount)||0, 
+            profit_amount: profit, 
+            discount_percent: Number(rawData.discount_percent)||0
         };
 
         if (id) await supabase.from('appointments').update(payload).eq('id', id);
         else await supabase.from('appointments').insert([payload]);
+
+        if (returns_to_create && returns_to_create.length > 0) {
+            const returnsPayload = returns_to_create.map(ret => {
+                const returnTime = (ret.time && ret.time.trim() !== '') ? ret.time : (payload.time || '09:00');
+                
+                // --- CÁLCULO DA HORA FINAL DO RETORNO (Duração de 30 minutos) ---
+                let returnEndTime = null;
+                try {
+                    const startObj = parseISO(`${ret.date}T${returnTime}`);
+                    const endObj = addMinutes(startObj, 30); // Define duração de 30min para retorno
+                    returnEndTime = format(endObj, 'HH:mm');
+                } catch (e) {
+                    console.error("Erro ao calcular hora final do retorno", e);
+                }
+
+                return {
+                    patient_id: payload.patient_id,
+                    date: ret.date,
+                    time: returnTime,
+                    end_time: returnEndTime, 
+                    notes: `Retorno Automático: ${ret.note || ''}`,
+                    status: 'Agendado',
+                    type: 'Recorrente',
+                    service_type_custom: 'Retorno',
+                    payment_methods_json: [],
+                    procedures_json: [],
+                    materials_json: [],
+                    total_amount: 0,
+                    cost_amount: 0,
+                    profit_amount: 0,
+                    discount_percent: 0
+                };
+            });
+            
+            const { error: returnError } = await supabase.from('appointments').insert(returnsPayload);
+            if (returnError) throw new Error("Erro ao criar retornos: " + returnError.message);
+        }
         
         queryClient.invalidateQueries();
         setIsModalOpen(false);
@@ -234,306 +284,247 @@ export default function Schedule() {
         } 
       />
       
-      {/* GRID PRINCIPAL: 
-          - Mobile: Coluna única.
-          - Desktop (lg): 2 colunas. A Sidebar tem 380px fixos, o resto é fluido.
-          Isso garante que ao dar zoom out, a sidebar não fique larga demais, e o calendário ganhe espaço.
-      */}
-      <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6 items-start">
+      <div className="flex flex-col gap-6 w-full">
           
-          {/* --- SIDEBAR: Agendamentos + Legenda --- 
-              Usamos 'lg:sticky' e 'lg:top-4' para fixar a barra ao rolar a página em telas grandes.
-              A altura é calculada para ocupar a tela toda menos margens (100vh - 2rem).
-          */}
-          <div className="lg:sticky lg:top-4 h-auto lg:h-[calc(100vh-2rem)] flex flex-col">
-              <Card className="flex flex-col bg-white border-stone-200 shadow-sm overflow-hidden h-full">
-                  <div className="p-4 border-b border-stone-100 bg-stone-50 shrink-0">
-                      <h3 className="font-bold text-stone-800 text-sm flex items-center gap-2">
-                          <CalIcon className="w-4 h-4 text-stone-500"/> 
-                          Agendamentos ({monthEvents.length})
-                      </h3>
-                  </div>
-                  
-                  {/* Lista com Rolagem Interna */}
-                  <div className="flex-1 overflow-y-auto min-h-[300px]">
-                      <div className="divide-y divide-stone-100">
-                          {monthEvents.length > 0 ? monthEvents.map(evt => (
-                              <div key={evt.id} className="p-4 hover:bg-stone-50 transition-colors flex items-start gap-3 group cursor-pointer" onClick={() => handleOpen(evt)}>
-                                  <div className="flex flex-col items-center min-w-[48px] bg-white rounded-lg p-2 border border-stone-100 shadow-sm">
-                                      <span className="text-sm font-bold text-stone-800">{evt.date ? format(parseISO(evt.date), 'dd') : ''}</span>
-                                      <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wide">{evt.date ? format(parseISO(evt.date), 'EEE', {locale: ptBR}) : ''}</span>
-                                  </div>
-                                  <div className="flex-1 min-w-0 pt-0.5">
-                                      <p className="text-sm font-bold text-stone-800 line-clamp-1 group-hover:text-blue-600 transition-colors">
-                                        {evt.patients?.full_name || 'Paciente s/ nome'}
-                                      </p>
-                                      <div className="flex flex-wrap items-center gap-2 mt-2">
-                                          <Badge variant="outline" className="text-[10px] h-5 bg-white font-mono text-stone-600 border-stone-200">{evt.time}</Badge>
-                                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase border tracking-wide
-                                            ${evt.status === 'Confirmado' ? 'bg-lime-50 text-lime-700 border-lime-200' :
-                                              (evt.status === 'Cancelado' || evt.status === 'Não Compareceu') ? 'bg-red-50 text-red-700 border-red-200' :
-                                              evt.status === 'Desmarcado' ? 'bg-stone-100 text-stone-600 border-stone-200' :
-                                              evt.status === 'Realizado Pago' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                                              evt.status === 'Realizado a Pagar' ? 'bg-orange-50 text-orange-700 border-orange-200' :
-                                              evt.status === 'Realizado (Em Andamento)' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
-                                              evt.status === 'Realizado' ? 'bg-cyan-50 text-cyan-700 border-cyan-200' :
-                                              evt.type === 'Novo' ? 'bg-blue-50 text-blue-700 border-blue-200' :
-                                              'bg-purple-50 text-purple-700 border-purple-200'
-                                            }`}>
-                                              {evt.status === 'Agendado' ? evt.type : evt.status}
-                                          </span>
-                                      </div>
-                                  </div>
-                              </div>
-                          )) : <div className="flex flex-col items-center justify-center h-60 text-stone-400 text-sm italic">
-                                <CalIcon className="w-10 h-10 mb-3 opacity-10"/>
-                                Nenhum agendamento encontrado.
-                               </div>}
-                      </div>
-                  </div>
-
-                  {/* Legenda Fixa no Rodapé da Sidebar */}
-                  <div className="p-4 border-t border-stone-100 bg-stone-50 grid grid-cols-2 gap-y-2 gap-x-2 text-[10px] shrink-0 font-medium text-stone-600 mt-auto">
-                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-100 border-l-2 border-blue-500"></div>Novo</div>
-                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-100 border-l-2 border-purple-500"></div>Recorrente</div>
-                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-lime-100 border-l-2 border-lime-500"></div>Confirmado</div>
-                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-emerald-100 border-l-2 border-emerald-600"></div>Pago</div>
-                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-orange-100 border-l-2 border-orange-500"></div>A Pagar</div>
-                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-indigo-100 border-l-2 border-indigo-500"></div>Em Andamento</div>
-                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-cyan-100 border-l-2 border-cyan-500"></div>Realizado</div>
-                      <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-stone-100 border-l-2 border-stone-500"></div>Desmarcado</div>
-                      <div className="flex items-center gap-2 col-span-2"><div className="w-3 h-3 rounded bg-red-100 border-l-2 border-red-500"></div>Não Compareceu/Cancelado</div>
-                  </div>
-              </Card>
-          </div>
-
-          {/* --- CONTEÚDO PRINCIPAL: Calendário + Slots --- */}
-          <div className="flex flex-col gap-6 min-w-0">
-              
-              {/* 1. CALENDÁRIO VISUAL */}
-              <div className="bg-white rounded-xl border border-stone-200 overflow-hidden flex flex-col shadow-sm">
-                  <div className="flex items-center justify-between p-4 border-b border-stone-100 bg-white">
+          {/* 1. CALENDÁRIO VISUAL */}
+          <div className="bg-white rounded-xl border border-stone-200 overflow-hidden flex flex-col shadow-sm">
+              <div className="flex items-center justify-between p-4 border-b border-stone-100 bg-white">
+                <div className="flex items-center gap-4">
                     <Button variant="ghost" size="icon" onClick={() => setCurrentDate(subMonths(currentDate, 1))}><ChevronLeft className="w-5 h-5"/></Button>
                     <span className="text-xl font-bold text-stone-800 capitalize">{format(currentDate, 'MMMM yyyy', { locale: ptBR })}</span>
                     <Button variant="ghost" size="icon" onClick={() => setCurrentDate(addMonths(currentDate, 1))}><ChevronRight className="w-5 h-5"/></Button>
-                  </div>
-
-                  {isConfigMode && (
-                      <div className="bg-purple-600 text-white text-xs py-2 text-center font-bold tracking-wider uppercase animate-in slide-in-from-top-1">
-                          Modo de Configuração Ativo
-                      </div>
-                  )}
-
-                  <div className="grid grid-cols-7 border-b border-stone-100 bg-stone-50">
-                      {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => <div key={d} className="p-3 text-center text-xs font-bold text-stone-500 uppercase">{d}</div>)}
-                  </div>
-                  
-                  {/* Grid do Calendário */}
-                  <div className="p-1">
-                    <div className="grid grid-cols-7 auto-rows-fr gap-1">
-                        {calendarDays.map((day, i) => {
-                            const dateKey = format(day, 'yyyy-MM-dd');
-                            const isCurrentMonth = isSameMonth(day, currentDate);
-                            const isToday = isSameDay(day, new Date());
-                            const dayEvents = getEventsForDay(day);
-                            
-                            const blockedInfo = blockedDays.find(b => b.date === dateKey);
-                            const isBlocked = !!blockedInfo;
-                            
-                            const dayConfig = dayConfigs.find(c => c.date === dateKey);
-                            const slots = dayConfig?.slots_json || dayConfig?.agenda_templates?.slots_json || [];
-                            const ghostSlots = slots.filter(slot => {
-                                const isOccupied = dayEvents.some(appt => appt.time === slot.time && appt.status !== 'Cancelado');
-                                return !isOccupied;
-                            });
-
-                            return (
-                                <div key={i} 
-                                    className={`
-                                            min-h-[140px] border border-stone-100 rounded-lg p-2 relative transition-all duration-200
-                                            ${!isCurrentMonth ? 'bg-stone-50/40 opacity-50' : 'bg-white'} 
-                                            ${isBlocked ? 'bg-stone-100' : 'hover:border-blue-300 hover:shadow-md'}
-                                            ${isConfigMode && isCurrentMonth ? 'cursor-alias hover:bg-purple-50 ring-inset hover:ring-2 ring-purple-200' : ''}
-                                            ${isToday ? 'ring-2 ring-blue-500 border-transparent' : ''}
-                                    `}
-                                    onClick={(e) => { 
-                                        if(e.target === e.currentTarget || isConfigMode) {
-                                            handleDayClick(dateKey, isBlocked);
-                                        }
-                                    }}>
-                                    
-                                    <div className="flex justify-between items-start mb-2">
-                                        <div className={`text-sm font-semibold flex justify-center`}>
-                                            <span className={`w-7 h-7 flex items-center justify-center rounded-full ${isToday ? 'bg-blue-600 text-white shadow-sm' : isCurrentMonth ? 'text-stone-700' : 'text-stone-300'}`}>
-                                                {format(day, 'd')}
-                                            </span>
-                                        </div>
-                                        
-                                        <TooltipProvider>
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <button 
-                                                        onClick={(e) => handleToggleBlock(e, day, blockedInfo)}
-                                                        className={`p-1.5 rounded-full transition-all ${isBlocked ? 'text-stone-600 bg-stone-200' : 'text-stone-300 hover:text-red-400 hover:bg-red-50'}`}
-                                                    >
-                                                        {isBlocked ? <Lock className="w-3.5 h-3.5"/> : <Unlock className="w-3.5 h-3.5"/>}
-                                                    </button>
-                                                </TooltipTrigger>
-                                                <TooltipContent><p>{isBlocked ? "Desbloquear Dia" : "Bloquear Dia"}</p></TooltipContent>
-                                            </Tooltip>
-                                        </TooltipProvider>
-                                    </div>
-
-                                    {!isBlocked && ghostSlots.length > 0 && (
-                                        <div className="mb-2 space-y-1 pointer-events-none opacity-70">
-                                            {ghostSlots.slice(0, 3).map((slot, idx) => (
-                                                <div key={idx} className="text-[10px] text-stone-500 px-1.5 py-0.5 border border-dashed border-stone-200 rounded flex justify-between select-none bg-stone-50/50">
-                                                    <span className="font-mono font-bold">{slot.time}</span>
-                                                    <span className="truncate max-w-[50px]">{slot.label}</span>
-                                                </div>
-                                            ))}
-                                            {ghostSlots.length > 3 && <div className="text-[9px] text-stone-400 text-center font-medium">+{ghostSlots.length - 3} livres</div>}
-                                        </div>
-                                    )}
-
-                                    <div className="space-y-1 relative z-10">
-                                        {isBlocked ? (
-                                            <div className="flex flex-col items-center justify-center h-full py-4 opacity-40 select-none">
-                                                <Ban className="w-5 h-5 text-stone-500 mb-1"/>
-                                                <span className="text-[10px] font-bold text-stone-600 uppercase tracking-widest">Fechado</span>
-                                            </div>
-                                        ) : (
-                                            dayEvents.map(ev => (
-                                                <div 
-                                                    key={ev.id}
-                                                    className={`text-[10px] px-2 py-1 rounded-md truncate shadow-sm border-l-4 cursor-pointer transition-all hover:-translate-y-0.5 ${getEventStyle(ev)}`}
-                                                    onClick={(e) => { e.stopPropagation(); handleOpen(ev); }}
-                                                    title={`${ev.time} - ${ev.patients?.full_name} (${ev.status})`}
-                                                >
-                                                    <span className="font-bold mr-1">{ev.time}</span>
-                                                    {ev.patients?.full_name || 'S/ Nome'}
-                                                </div>
-                                            ))
-                                        )}
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                  </div>
+                </div>
+                
+                <Badge variant="secondary" className="text-sm px-3 py-1 bg-stone-100 text-stone-700 border border-stone-200">
+                    <CalIcon className="w-4 h-4 mr-2 text-stone-500"/>
+                    Agendamentos ({monthEvents.length})
+                </Badge>
               </div>
 
-              {/* 2. CARD DE DISPONIBILIDADE / SLOTS */}
-              <Card className="flex flex-col bg-white border-stone-200 shadow-sm overflow-hidden">
-                  <div className="p-4 border-b border-stone-100 bg-stone-100 flex justify-between items-center">
-                      <h3 className="font-bold text-stone-700 text-sm flex items-center gap-2">
-                          <Clock className="w-4 h-4"/> Disponibilidade / Slots
-                      </h3>
-                      <Badge variant="outline" className="bg-white text-stone-500 border-stone-200">Visão Geral do Mês</Badge>
+              {isConfigMode && (
+                  <div className="bg-purple-600 text-white text-xs py-2 text-center font-bold tracking-wider uppercase animate-in slide-in-from-top-1">
+                      Modo de Configuração Ativo
                   </div>
-                  
-                  <div className="overflow-y-auto max-h-[500px] p-4 bg-stone-50/30">
-                      {/* GRID RESPONSIVO PARA OS SLOTS */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-4">
-                          {daysOfMonthList.map((day) => {
-                              const dateStr = format(day, 'yyyy-MM-dd');
-                              const dayConfig = dayConfigs.find(c => c.date === dateStr);
-                              const dayAppts = monthEvents.filter(a => a.date === dateStr);
-                              const isToday = isSameDay(day, new Date());
-                              
-                              const configuredSlots = dayConfig?.slots_json || dayConfig?.agenda_templates?.slots_json || [];
+              )}
 
-                              return (
-                                  <div key={dateStr} className={`border rounded-lg p-3 transition-colors shadow-sm ${isToday ? 'border-blue-200 bg-blue-50/30' : 'border-stone-200 bg-white'}`}>
-                                      <div className="flex items-center justify-between mb-3 pb-2 border-b border-stone-100">
-                                          <div className="flex items-center gap-2">
-                                            <span className="text-sm font-bold text-stone-800">{format(day, 'dd/MM')}</span>
-                                            <span className="text-[10px] font-bold text-stone-400 uppercase bg-stone-100 px-1.5 py-0.5 rounded">{format(day, 'EEEE', {locale: ptBR})}</span>
-                                          </div>
-                                          {isConfigMode && (
-                                              <Button variant="ghost" size="icon" className="h-6 w-6 text-stone-300 hover:text-purple-600" onClick={() => handleDayClick(dateStr, false)}>
-                                                  <Settings className="w-3.5 h-3.5"/>
-                                              </Button>
-                                          )}
+              <div className="grid grid-cols-7 border-b border-stone-100 bg-stone-50">
+                  {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => <div key={d} className="p-3 text-center text-xs font-bold text-stone-500 uppercase">{d}</div>)}
+              </div>
+              
+              <div className="p-1">
+                <div className="grid grid-cols-7 auto-rows-fr gap-1">
+                    {calendarDays.map((day, i) => {
+                        const dateKey = format(day, 'yyyy-MM-dd');
+                        const isCurrentMonth = isSameMonth(day, currentDate);
+                        const isToday = isSameDay(day, new Date());
+                        const dayEvents = getEventsForDay(day);
+                        
+                        const blockedInfo = blockedDays.find(b => b.date === dateKey);
+                        const isBlocked = !!blockedInfo;
+                        
+                        const dayConfig = dayConfigs.find(c => c.date === dateKey);
+                        const slots = dayConfig?.slots_json || dayConfig?.agenda_templates?.slots_json || [];
+                        const ghostSlots = slots.filter(slot => {
+                            const isOccupied = dayEvents.some(appt => appt.time === slot.time && appt.status !== 'Cancelado');
+                            return !isOccupied;
+                        });
+
+                        return (
+                            <div key={i} 
+                                className={`
+                                        min-h-[140px] border border-stone-100 rounded-lg p-2 relative transition-all duration-200
+                                        ${!isCurrentMonth ? 'bg-stone-50/40 opacity-50' : 'bg-white'} 
+                                        ${isBlocked ? 'bg-stone-100' : 'hover:border-blue-300 hover:shadow-md'}
+                                        ${isConfigMode && isCurrentMonth ? 'cursor-alias hover:bg-purple-50 ring-inset hover:ring-2 ring-purple-200' : ''}
+                                        ${isToday ? 'ring-2 ring-blue-500 border-transparent' : ''}
+                                `}
+                                onClick={(e) => { 
+                                    if(e.target === e.currentTarget || isConfigMode) {
+                                        handleDayClick(dateKey, isBlocked);
+                                    }
+                                }}>
+                                
+                                <div className="flex justify-between items-start mb-2">
+                                    <div className={`text-sm font-semibold flex justify-center`}>
+                                        <span className={`w-7 h-7 flex items-center justify-center rounded-full ${isToday ? 'bg-blue-600 text-white shadow-sm' : isCurrentMonth ? 'text-stone-700' : 'text-stone-300'}`}>
+                                            {format(day, 'd')}
+                                        </span>
+                                    </div>
+                                    
+                                    <TooltipProvider>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <button 
+                                                    onClick={(e) => handleToggleBlock(e, day, blockedInfo)}
+                                                    className={`p-1.5 rounded-full transition-all ${isBlocked ? 'text-stone-600 bg-stone-200' : 'text-stone-300 hover:text-red-400 hover:bg-red-50'}`}
+                                                >
+                                                    {isBlocked ? <Lock className="w-3.5 h-3.5"/> : <Unlock className="w-3.5 h-3.5"/>}
+                                                </button>
+                                            </TooltipTrigger>
+                                            <TooltipContent><p>{isBlocked ? "Desbloquear Dia" : "Bloquear Dia"}</p></TooltipContent>
+                                        </Tooltip>
+                                    </TooltipProvider>
+                                </div>
+
+                                {!isBlocked && ghostSlots.length > 0 && (
+                                    <div className="mb-2 space-y-1 pointer-events-none opacity-70">
+                                        {ghostSlots.slice(0, 3).map((slot, idx) => (
+                                            <div key={idx} className="text-[10px] text-stone-500 px-1.5 py-0.5 border border-dashed border-stone-200 rounded flex justify-between select-none bg-stone-50/50">
+                                                <span className="font-mono font-bold">{slot.time}</span>
+                                                <span className="truncate max-w-[50px]">{slot.label}</span>
+                                            </div>
+                                        ))}
+                                        {ghostSlots.length > 3 && <div className="text-[9px] text-stone-400 text-center font-medium">+{ghostSlots.length - 3} livres</div>}
+                                    </div>
+                                )}
+
+                                <div className="space-y-1 relative z-10">
+                                    {isBlocked ? (
+                                        <div className="flex flex-col items-center justify-center h-full py-4 opacity-40 select-none">
+                                            <Ban className="w-5 h-5 text-stone-500 mb-1"/>
+                                            <span className="text-[10px] font-bold text-stone-600 uppercase tracking-widest">Fechado</span>
+                                        </div>
+                                    ) : (
+                                        dayEvents.map(ev => (
+                                            <div 
+                                                key={ev.id}
+                                                className={`text-[10px] px-2 py-1 rounded-md truncate shadow-sm border-l-4 cursor-pointer transition-all hover:-translate-y-0.5 ${getEventStyle(ev)}`}
+                                                onClick={(e) => { e.stopPropagation(); handleOpen(ev); }}
+                                                title={`${ev.time} - ${ev.patients?.full_name} (${ev.status})`}
+                                            >
+                                                <span className="font-bold mr-1">{ev.time}</span>
+                                                {ev.patients?.full_name || 'S/ Nome'}
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+              </div>
+
+              <div className="p-4 border-t border-stone-100 bg-stone-50 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-9 gap-2 text-[10px] font-medium text-stone-600">
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-100 border-l-2 border-blue-500"></div>Novo</div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-100 border-l-2 border-purple-500"></div>Recorrente</div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-lime-100 border-l-2 border-lime-500"></div>Confirmado</div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-emerald-100 border-l-2 border-emerald-600"></div>Pago</div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-orange-100 border-l-2 border-orange-500"></div>A Pagar</div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-indigo-100 border-l-2 border-indigo-500"></div>Em Andamento</div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-cyan-100 border-l-2 border-cyan-500"></div>Realizado</div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-stone-100 border-l-2 border-stone-500"></div>Desmarcado</div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-red-100 border-l-2 border-red-500"></div>Faltou/Cancelado</div>
+              </div>
+          </div>
+
+          {/* 2. CARD DE DISPONIBILIDADE / SLOTS */}
+          <Card className="flex flex-col bg-white border-stone-200 shadow-sm overflow-hidden">
+              <div className="p-4 border-b border-stone-100 bg-stone-100 flex justify-between items-center">
+                  <h3 className="font-bold text-stone-700 text-sm flex items-center gap-2">
+                      <Clock className="w-4 h-4"/> Disponibilidade / Slots
+                  </h3>
+                  <Badge variant="outline" className="bg-white text-stone-500 border-stone-200">Visão Geral do Mês</Badge>
+              </div>
+              
+              <div className="overflow-y-auto max-h-[500px] p-4 bg-stone-50/30">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {daysOfMonthList.map((day) => {
+                          const dateStr = format(day, 'yyyy-MM-dd');
+                          const dayConfig = dayConfigs.find(c => c.date === dateStr);
+                          const dayAppts = monthEvents.filter(a => a.date === dateStr);
+                          const isToday = isSameDay(day, new Date());
+                          
+                          const configuredSlots = dayConfig?.slots_json || dayConfig?.agenda_templates?.slots_json || [];
+
+                          return (
+                              <div key={dateStr} className={`border rounded-lg p-3 transition-colors shadow-sm ${isToday ? 'border-blue-200 bg-blue-50/30' : 'border-stone-200 bg-white'}`}>
+                                  <div className="flex items-center justify-between mb-3 pb-2 border-b border-stone-100">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-sm font-bold text-stone-800">{format(day, 'dd/MM')}</span>
+                                        <span className="text-[10px] font-bold text-stone-400 uppercase bg-stone-100 px-1.5 py-0.5 rounded">{format(day, 'EEEE', {locale: ptBR})}</span>
                                       </div>
+                                      {isConfigMode && (
+                                          <Button variant="ghost" size="icon" className="h-6 w-6 text-stone-300 hover:text-purple-600" onClick={() => handleDayClick(dateStr, false)}>
+                                              <Settings className="w-3.5 h-3.5"/>
+                                          </Button>
+                                      )}
+                                  </div>
 
-                                      <div className="space-y-2">
-                                          {configuredSlots.length > 0 ? (
-                                              configuredSlots.map((slot, idx) => {
-                                                  const occupiedAppt = dayAppts.find(appt => 
-                                                    appt.time === slot.time && 
-                                                    appt.status !== 'Cancelado' && 
-                                                    appt.status !== 'Desmarcado' && 
-                                                    appt.status !== 'Não Compareceu'
-                                                  );
-                                                  const isOccupied = !!occupiedAppt;
+                                  <div className="space-y-2">
+                                      {configuredSlots.length > 0 ? (
+                                          configuredSlots.map((slot, idx) => {
+                                              const occupiedAppt = dayAppts.find(appt => 
+                                                appt.time === slot.time && 
+                                                appt.status !== 'Cancelado' && 
+                                                appt.status !== 'Desmarcado' && 
+                                                appt.status !== 'Não Compareceu'
+                                              );
+                                              const isOccupied = !!occupiedAppt;
 
-                                                  return (
-                                                      <div 
-                                                        key={idx} 
-                                                        className={`flex justify-between items-center border rounded px-2.5 py-2 shadow-sm transition-all text-xs
-                                                            ${isOccupied 
-                                                                ? 'bg-red-50 border-red-100 text-red-800' 
-                                                                : 'bg-stone-50 border-stone-100 text-stone-700 hover:border-blue-300 hover:bg-white'
-                                                            }
-                                                        `}
-                                                      >
-                                                          <div className="flex flex-col min-w-0">
-                                                              <div className="flex items-center gap-2">
-                                                                  <span className="font-bold">{slot.time}</span>
-                                                                  <span className="truncate max-w-[100px] opacity-80">{slot.label}</span>
-                                                              </div>
-                                                              {isOccupied && (
-                                                                  <div className="text-[10px] font-medium flex items-center gap-1 mt-1 text-red-600">
-                                                                      <AlertCircle className="w-3 h-3"/> 
-                                                                      <span className="truncate max-w-[120px]">{occupiedAppt.patients?.full_name}</span>
-                                                                  </div>
-                                                              )}
+                                              return (
+                                                  <div 
+                                                    key={idx} 
+                                                    className={`flex justify-between items-center border rounded px-2.5 py-2 shadow-sm transition-all text-xs
+                                                        ${isOccupied 
+                                                            ? 'bg-red-50 border-red-100 text-red-800' 
+                                                            : 'bg-stone-50 border-stone-100 text-stone-700 hover:border-blue-300 hover:bg-white'
+                                                        }
+                                                    `}
+                                                  >
+                                                      <div className="flex flex-col min-w-0">
+                                                          <div className="flex items-center gap-2">
+                                                              <span className="font-bold">{slot.time}</span>
+                                                              <span className="truncate max-w-[100px] opacity-80">{slot.label}</span>
                                                           </div>
-
-                                                          {isOccupied ? (
-                                                              <Button 
-                                                                size="icon" 
-                                                                variant="ghost" 
-                                                                className="h-6 w-6 rounded-full bg-white hover:bg-red-100 text-red-400 hover:text-red-700 border border-red-100 shadow-sm"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    if(window.confirm('Deseja liberar este horário? O agendamento será excluído.')) {
-                                                                        handleDeleteAppointment(occupiedAppt.id);
-                                                                    }
-                                                                }}
-                                                                title="Excluir Agendamento"
-                                                              >
-                                                                  <Trash2 className="w-3 h-3" />
-                                                              </Button>
-                                                          ) : (
-                                                              <Button 
-                                                                size="icon" 
-                                                                variant="ghost" 
-                                                                className="h-6 w-6 rounded-full bg-white hover:bg-blue-100 text-stone-400 hover:text-blue-600 border border-stone-200 shadow-sm"
-                                                                onClick={() => handleQuickSchedule(dateStr, slot.time)}
-                                                                title="Agendar neste horário"
-                                                              >
-                                                                  <Plus className="w-3 h-3" />
-                                                              </Button>
+                                                          {isOccupied && (
+                                                              <div className="text-[10px] font-medium flex items-center gap-1 mt-1 text-red-600">
+                                                                  <AlertCircle className="w-3 h-3"/> 
+                                                                  <span className="truncate max-w-[120px]">{occupiedAppt.patients?.full_name}</span>
+                                                              </div>
                                                           )}
                                                       </div>
-                                                  );
-                                              })
-                                          ) : (
-                                              <div className="text-center py-4 bg-stone-50/50 rounded border border-dashed border-stone-200">
-                                                  <span className="text-[10px] text-stone-400 italic">Nada configurado</span>
-                                              </div>
-                                          )}
-                                      </div>
-                                  </div>
-                              );
-                          })}
-                      </div>
-                  </div>
-              </Card>
 
-          </div>
+                                                      {isOccupied ? (
+                                                          <Button 
+                                                            size="icon" 
+                                                            variant="ghost" 
+                                                            className="h-6 w-6 rounded-full bg-white hover:bg-red-100 text-red-400 hover:text-red-700 border border-red-100 shadow-sm"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                if(window.confirm('Deseja liberar este horário? O agendamento será excluído.')) {
+                                                                    handleDeleteAppointment(occupiedAppt.id);
+                                                                }
+                                                            }}
+                                                            title="Excluir Agendamento"
+                                                          >
+                                                              <Trash2 className="w-3 h-3" />
+                                                          </Button>
+                                                      ) : (
+                                                          <Button 
+                                                            size="icon" 
+                                                            variant="ghost" 
+                                                            className="h-6 w-6 rounded-full bg-white hover:bg-blue-100 text-stone-400 hover:text-blue-600 border border-stone-200 shadow-sm"
+                                                            onClick={() => handleQuickSchedule(dateStr, slot.time)}
+                                                            title="Agendar neste horário"
+                                                          >
+                                                              <Plus className="w-3 h-3" />
+                                                          </Button>
+                                                      )}
+                                                  </div>
+                                              );
+                                          })
+                                      ) : (
+                                          <div className="text-center py-4 bg-stone-50/50 rounded border border-dashed border-stone-200">
+                                              <span className="text-[10px] text-stone-400 italic">Nada configurado</span>
+                                          </div>
+                                      )}
+                                  </div>
+                              </div>
+                          );
+                      })}
+                  </div>
+              </div>
+          </Card>
       </div>
       
       <AppointmentModal 

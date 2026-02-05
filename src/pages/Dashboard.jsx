@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { supabase } from '../supabase';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { startOfDay, endOfDay, addDays, isWithinInterval, getDate, getMonth, parseISO, startOfMonth, endOfMonth, differenceInMonths, addMonths } from 'date-fns';
+import { startOfDay, endOfDay, addDays, isWithinInterval, getDate, getMonth, parseISO, startOfMonth, endOfMonth, differenceInMonths, addMonths, isBefore, isAfter } from 'date-fns';
 import { ptBR } from 'date-fns/locale'; 
 import PageHeader from '@/components/ui/PageHeader';
 import StatCard from '@/components/ui/StatCard';
@@ -23,13 +23,12 @@ const RECEIVE_METHODS = [
     'Pix PF', 'Pix PJ', 'Dinheiro', 
     'Débito PF', 'Débito PJ', 
     'Cartão de Crédito PF', 'Cartão de Crédito PJ', 
-    'Agendamento de Pagamento', 
     'Outro'
 ];
 
 const DISCOUNT_ALLOWED_METHODS = ['Dinheiro', 'Pix PF', 'Pix PJ', 'Débito PJ', 'Débito PF'];
 const CREDIT_METHODS = ['Cartão de Crédito PJ', 'Cartão de Crédito PF'];
-const INSTALLMENT_ALLOWED_METHODS = [...CREDIT_METHODS, 'Agendamento de Pagamento'];
+const INSTALLMENT_ALLOWED_METHODS = [...CREDIT_METHODS];
 
 export default function Dashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -59,7 +58,10 @@ export default function Dashboard() {
   const { data: installments = [] } = useQuery({ 
     queryKey: ['installments'], 
     queryFn: async () => { 
-        const { data } = await supabase.from('installments').select('*, appointments(payment_methods_json)'); 
+        // Garante o nome do paciente via relacionamento
+        const { data } = await supabase
+            .from('installments')
+            .select('*, appointments(payment_methods_json, patients(full_name))'); 
         return data || []; 
     } 
   });
@@ -84,7 +86,7 @@ export default function Dashboard() {
     onError: (e) => toast.error("Erro: " + e.message)
   });
 
-  // --- MUTAÇÃO INTELIGENTE DE RECEBIMENTO ---
+  // --- MUTAÇÃO DE RECEBIMENTO ---
   const processPaymentMutation = useMutation({
     mutationFn: async ({ id, method, discountPercent, installmentsCount, originalValue, appointmentId, patientName }) => {
         
@@ -94,12 +96,15 @@ export default function Dashboard() {
         const apptId = Number(appointmentId);
         
         if (!IS_CREDIT_PARCELADO && !IS_PARCELED_PAYMENT) {
+             // Atualiza a parcela existente: marca como recebida e muda o método para o real (ex: Pix)
              await supabase.from('installments').update({
                  is_received: true,
                  received_date: today.toISOString(),
+                 method: method 
              }).eq('id', id);
 
         } else {
+            // Lógica de parcelamento no cartão ou re-parcelamento
             const baseInstallmentValue = originalValue / installmentsCount;
             const discountValue = baseInstallmentValue * (discountPercent / 100);
             const firstInstallmentPaidValue = baseInstallmentValue - discountValue;
@@ -107,14 +112,9 @@ export default function Dashboard() {
             let firstInstallmentDueDate;
             let firstInstallmentReceivedDate;
             
-            if (IS_CREDIT_PARCELADO || IS_PARCELED_PAYMENT) {
+            if (IS_CREDIT_PARCELADO) {
                 firstInstallmentDueDate = addMonths(today, 1); 
-                
-                if (IS_CREDIT_PARCELADO) {
-                    firstInstallmentReceivedDate = format(firstInstallmentDueDate, 'yyyy-MM-dd');
-                } else {
-                    firstInstallmentReceivedDate = today.toISOString(); 
-                }
+                firstInstallmentReceivedDate = format(firstInstallmentDueDate, 'yyyy-MM-dd');
             } else {
                 firstInstallmentDueDate = today;
                 firstInstallmentReceivedDate = today.toISOString();
@@ -126,7 +126,8 @@ export default function Dashboard() {
                 received_date: firstInstallmentReceivedDate, 
                 installment_number: 1, 
                 total_installments: installmentsCount, 
-                due_date: format(firstInstallmentDueDate, 'yyyy-MM-dd'), 
+                due_date: format(firstInstallmentDueDate, 'yyyy-MM-dd'),
+                method: method 
             }).eq('id', id);
             
             if(updateError) throw updateError;
@@ -146,7 +147,8 @@ export default function Dashboard() {
                         value: baseInstallmentValue, 
                         due_date: formattedDate,
                         is_received: isReceived, 
-                        received_date: isReceived ? formattedDate : null 
+                        received_date: isReceived ? formattedDate : null,
+                        method: method 
                     });
                 }
                 if (newInstallments.length > 0) {
@@ -201,7 +203,7 @@ export default function Dashboard() {
           installmentsCount: Number(receiveInstallments),
           originalValue: Number(receivingItem.value),
           appointmentId: receivingItem.appointment_id,
-          patientName: receivingItem.patient_name
+          patientName: receivingItem.patient_name || receivingItem.appointments?.patients?.full_name
       });
   };
   
@@ -219,17 +221,17 @@ export default function Dashboard() {
 
   const stats = useMemo(() => {
     const today = startOfDay(new Date()); 
+    // CORREÇÃO: Limite de 30 dias a partir de hoje
     const next30Days = endOfDay(addDays(today, 30));
+    
     const currentMonthStart = startOfMonth(today);
     const currentMonthEnd = endOfMonth(today);
 
-    // CORREÇÃO: Filtra status que contêm "Realizado"
     const monthAppts = appointments.filter(a => { 
         const d = parseISO(a.date); 
         return isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd }) && a.status && a.status.includes('Realizado'); 
     });
     
-    // CORREÇÃO AQUI: Filtra despesas do mês que estão PAGAS (is_paid === true)
     const monthExps = expenses.filter(e => { 
         if (!e.is_paid) return false;
         const d = parseISO(e.due_date); 
@@ -242,14 +244,18 @@ export default function Dashboard() {
         return i.is_received && isWithinInterval(d, { start: currentMonthStart, end: currentMonthEnd }); 
     });
 
+    // --- CORREÇÃO DO FILTRO DE AVISOS (A RECEBER) ---
     const paymentAlerts = installments
         .filter(i => {
-            const isPending = !i.is_received;
-            const isSoon = isWithinInterval(parseISO(i.due_date), { start: today, end: next30Days });
-            const methods = i.appointments?.payment_methods_json || [];
-            const isScheduledPayment = methods.some(m => m.method === 'Agendamento de Pagamento');
+            // Regra 1: Não pode ter sido recebido ainda
+            if (i.is_received) return false;
             
-            return isPending && isScheduledPayment && isSoon; 
+            // Regra 2: Deve vencer até os próximos 30 dias (incluindo o que já venceu e está atrasado)
+            if (i.due_date) {
+                const dueDate = parseISO(i.due_date);
+                return isBefore(dueDate, next30Days);
+            }
+            return false;
         })
         .sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
 
@@ -258,6 +264,7 @@ export default function Dashboard() {
         const cashPart = methods
             .filter(m => {
                 const method = m.method || '';
+                // "Agendamento de Pagamento" NÃO entra no caixa aqui
                 const isInstallmentStarter = CREDIT_METHODS.includes(method) || method === 'Agendamento de Pagamento';
                 return !isInstallmentStarter;
             })
@@ -280,14 +287,13 @@ export default function Dashboard() {
     const profit = totalRevenue - totalExpenses;
 
     const birthdays = patients.filter(p => { if (!p.birth_date) return false; const dob = parseISO(p.birth_date); return getDate(dob) === getDate(today) && getMonth(dob) === getMonth(today); });
-    const confirmedList = appointments.filter(a => { const d = parseISO(a.date); return a.status === 'Confirmado' && isWithinInterval(d, { start: today, end: next30Days }); }).sort((a, b) => new Date(a.date) - new Date(b.date));
-    const returnWarnings = appointments.filter(a => { const d = parseISO(a.date); return a.status === 'Agendado' && isWithinInterval(d, { start: today, end: next30Days }); }).sort((a, b) => new Date(a.date) - new Date(b.date));
+    const confirmedList = appointments.filter(a => { const d = parseISO(a.date); return a.status === 'Confirmado' && isWithinInterval(d, { start: today, end: addDays(today, 30) }); }).sort((a, b) => new Date(a.date) - new Date(b.date));
+    const returnWarnings = appointments.filter(a => { const d = parseISO(a.date); return a.status === 'Agendado' && isWithinInterval(d, { start: today, end: addDays(today, 30) }); }).sort((a, b) => new Date(a.date) - new Date(b.date));
 
     const recoveryList = [];
     const processedRecovery = new Set();
     const sortedAppts = [...appointments].sort((a, b) => new Date(b.date) - new Date(a.date));
     sortedAppts.forEach(appt => {
-        // CORREÇÃO: Inclui Realizado Pago na recuperação
         if (!processedRecovery.has(appt.patient_id) && appt.status && appt.status.includes('Realizado')) {
             const procs = appt.procedures_json || [];
             const hasBotox = procs.some(p => p.name?.toLowerCase().includes('botox') || p.name?.toLowerCase().includes('toxina'));
@@ -316,7 +322,6 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard title="Faturamento (Mês)" value={<span className="text-lg sm:text-xl font-bold tracking-tight">R$ {stats.totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={DollarSign} />
-        {/* Agora este card só mostra despesas PAGAS + Custos variáveis */}
         <StatCard title="Despesas (Mês)" value={<span className="text-lg sm:text-xl font-bold tracking-tight">R$ {stats.totalExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingDown} />
         <StatCard title="Líquido (Mês)" value={<span className="text-lg sm:text-xl font-bold tracking-tight">R$ {stats.profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>} icon={TrendingUp} className={stats.profit >= 0 ? 'border-emerald-200 bg-emerald-50 dark:bg-emerald-900/20' : 'border-rose-200 bg-rose-50 dark:bg-rose-900/20'} />
         <StatCard title="Realizados (Mês)" value={stats.monthCount} icon={Calendar} />
@@ -334,8 +339,12 @@ export default function Dashboard() {
                     <div className="space-y-2">{stats.paymentAlerts.map(i => (
                         <div key={i.id} className="p-3 bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 rounded-lg flex justify-between items-center group hover:bg-blue-100 transition-colors">
                             <div className="flex flex-col">
-                                <span className="text-sm font-bold text-stone-700 dark:text-stone-200">{i.patient_name}</span>
-                                <span className="text-xs text-stone-500">Venc: {format(parseISO(i.due_date), 'dd/MM/yyyy')}</span>
+                                <span className="text-sm font-bold text-stone-700 dark:text-stone-200">
+                                    {i.patient_name || i.appointments?.patients?.full_name || 'Paciente'}
+                                </span>
+                                <span className="text-xs text-stone-500">Venc: {i.due_date ? format(parseISO(i.due_date), 'dd/MM/yyyy') : 'S/ Data'}</span>
+                                {/* Mostrar método de origem para clareza */}
+                                <span className="text-[10px] text-stone-400 italic">{i.method}</span>
                             </div>
                             <div className="flex items-center gap-3">
                                 <span className="font-bold text-blue-600 text-sm">R$ {i.value?.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</span>
@@ -345,7 +354,7 @@ export default function Dashboard() {
                             </div>
                         </div>
                     ))}</div>
-                ) : <div className="text-xs text-stone-400 text-center py-10">Nenhum pagamento agendado próximo.</div>}
+                ) : <div className="text-xs text-stone-400 text-center py-10">Nenhum pagamento pendente para os próximos 30 dias.</div>}
             </CardContent>
         </Card>
 
@@ -512,7 +521,8 @@ export default function Dashboard() {
                                     total_installments: numInstallments, 
                                     value: totalVal, 
                                     due_date: pm.scheduled_date, 
-                                    is_received: false
+                                    is_received: false,
+                                    method: pm.method
                                 });
                             }
                             else if (isCreditCard) {
@@ -529,9 +539,18 @@ export default function Dashboard() {
                                         due_date: format(dueDate, 'yyyy-MM-dd'),
                                         is_received: true, 
                                         received_date: format(dueDate, 'yyyy-MM-dd'),
+                                        method: pm.method
                                     });
                                 }
-                            } 
+                            } else {
+                                // Para outros métodos, salvamos o método também
+                                installmentsPayload.push({
+                                    appointment_id: apptId, patient_name: rawData.patient_name_ref,
+                                    installment_number: 1, total_installments: 1, value: totalVal,
+                                    due_date: payload.date, is_received: true, received_date: payload.date,
+                                    method: pm.method
+                                });
+                            }
                         });
                     }
                     if (installmentsPayload.length) {
