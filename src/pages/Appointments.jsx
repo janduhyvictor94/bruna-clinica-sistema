@@ -102,13 +102,14 @@ export default function Appointments() {
     mutationFn: async (data) => {
         const { id, returns_to_create, consultation_value, ...rawData } = data;
         
+        // Função para limpar horários vazios (envia NULL se estiver vazio)
         const sanitizeTime = (t) => (t && t.trim() !== '') ? t : null;
 
         const payload = {
             patient_id: rawData.patient_id,
             date: rawData.date,
             time: sanitizeTime(rawData.time),
-            end_time: sanitizeTime(rawData.end_time),
+            end_time: sanitizeTime(rawData.end_time), // AGORA ENVIA NULL SE VAZIO
             status: rawData.status,
             type: rawData.type,
             service_type_custom: rawData.service_type_custom,
@@ -221,7 +222,7 @@ export default function Appointments() {
                             total_installments: numInstallments, 
                             value: totalVal, 
                             due_date: pm.scheduled_date, 
-                            is_received: false, // GARANTE QUE NÃO ESTÁ PAGO
+                            is_received: false, 
                             received_date: null,
                             method: pm.method 
                         });
@@ -273,6 +274,7 @@ export default function Appointments() {
             const returnsPayload = returns_to_create.map(ret => {
                 const returnTime = sanitizeTime(ret.time) || sanitizeTime(payload.time) || '09:00';
                 
+                // Trata hora final do retorno
                 let returnEndTime = sanitizeTime(ret.end_time);
                 
                 if (!returnEndTime) {
